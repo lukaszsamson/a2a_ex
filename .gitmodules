@@ -1,0 +1,3 @@
+[submodule "a2a-samples"]
+	path = a2a-samples
+	url = git@github.com:a2aproject/a2a-samples.git

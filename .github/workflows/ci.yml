@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: "1.15"
+            otp: "26"
+          - elixir: "1.19"
+            otp: "28"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up BEAM
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+      - name: Install dependencies
+        run: mix deps.get
+      - name: Check format
+        run: mix format --check-formatted
+      - name: Run tests
+        run: mix test
+      - name: Run dialyzer
+        run: mix dialyzer
+        if: matrix.elixir == '1.19'
