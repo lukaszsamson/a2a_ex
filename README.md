@@ -136,6 +136,8 @@ A2A.Server.Push.deliver(config, task,
 
 ## Documentation
 
+HexDocs: <https://hexdocs.pm/a2a_ex/0.1.0>
+
 Generate docs locally:
 
 ```bash

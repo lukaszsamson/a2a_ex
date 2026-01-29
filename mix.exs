@@ -7,6 +7,7 @@ defmodule A2aEx.MixProject do
       version: "0.1.0",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
+      elixirc_paths: elixirc_paths(Mix.env()),
       description: "Elixir client and server library for the Agent2Agent protocol.",
       package: package(),
       source_url: "https://github.com/lukaszsamson/a2a_ex",
@@ -53,4 +54,7 @@ defmodule A2aEx.MixProject do
       extras: ["README.md", "CHANGELOG.md"]
     ]
   end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 end
