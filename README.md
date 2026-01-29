@@ -1,8 +1,6 @@
 # A2A_EX
 
-Elixir client and server library for the Agent2Agent (A2A) protocol. Provides typed structs,
-REST and JSON-RPC transports, SSE streaming utilities, Plug integration, and a task store
-abstraction with an ETS adapter.
+Elixir client and server library for the [Agent2Agent (A2A) protocol](https://a2a-protocol.org/latest/). Provides typed structs, REST and JSON-RPC transports, SSE streaming utilities, Plug integration, and a task store abstraction with an ETS adapter.
 
 ## Features
 
@@ -15,7 +13,7 @@ abstraction with an ETS adapter.
 
 ## Protocol compatibility
 
-- v0.3.0 and latest-compatible mode.
+- [v0.3.0](https://a2a-protocol.org/v0.3.0/specification/) and [latest Release Candidate v1.0](https://a2a-protocol.org/latest/specification/)-compatible mode.
 - REST + SSE and JSON-RPC + SSE.
 
 ## Installation
