@@ -237,6 +237,7 @@ defmodule A2A.Server.REST.Plug do
 
   defp handle_push_config_set(conn, opts, task_id, extensions) do
     with :ok <- ensure_capability(opts.capabilities, :push_notifications),
+         :ok <- ensure_handler(opts.executor, :handle_push_notification_config_set, 3),
          {:ok, body} <- read_json(conn),
          config <- decode_push_config_set_request(body),
          {:ok, response} <-
@@ -255,6 +256,7 @@ defmodule A2A.Server.REST.Plug do
 
   defp handle_push_config_get(conn, opts, task_id, config_id, extensions) do
     with :ok <- ensure_capability(opts.capabilities, :push_notifications),
+         :ok <- ensure_handler(opts.executor, :handle_push_notification_config_get, 3),
          {:ok, response} <-
            run_request(opts, fn ->
              A2A.Server.ExecutorRunner.call(opts.executor, :handle_push_notification_config_get, [
@@ -271,6 +273,7 @@ defmodule A2A.Server.REST.Plug do
 
   defp handle_push_config_list(conn, opts, task_id, extensions) do
     with :ok <- ensure_capability(opts.capabilities, :push_notifications),
+         :ok <- ensure_handler(opts.executor, :handle_push_notification_config_list, 3),
          {:ok, response} <-
            run_request(opts, fn ->
              A2A.Server.ExecutorRunner.call(
@@ -296,6 +299,7 @@ defmodule A2A.Server.REST.Plug do
 
   defp handle_push_config_delete(conn, opts, task_id, config_id, extensions) do
     with :ok <- ensure_capability(opts.capabilities, :push_notifications),
+         :ok <- ensure_handler(opts.executor, :handle_push_notification_config_delete, 3),
          :ok <-
            run_request(opts, fn ->
              A2A.Server.ExecutorRunner.call(
@@ -315,6 +319,7 @@ defmodule A2A.Server.REST.Plug do
   defp handle_extended_agent_card(conn, opts, extensions) do
     with :ok <- ensure_latest(opts.version),
          :ok <- ensure_capability(opts.capabilities, :extended_agent_card),
+         :ok <- ensure_handler(opts.executor, :handle_get_extended_agent_card, 1),
          {:ok, card} <-
            run_request(opts, fn ->
              A2A.Server.ExecutorRunner.call(opts.executor, :handle_get_extended_agent_card, [
@@ -330,6 +335,7 @@ defmodule A2A.Server.REST.Plug do
   defp handle_card(conn, opts, extensions) do
     with :ok <- ensure_v0_3(opts.version),
          :ok <- ensure_capability(opts.capabilities, :extended_agent_card),
+         :ok <- ensure_handler(opts.executor, :handle_get_extended_agent_card, 1),
          {:ok, card} <-
            run_request(opts, fn ->
              A2A.Server.ExecutorRunner.call(opts.executor, :handle_get_extended_agent_card, [

@@ -204,7 +204,7 @@ defmodule A2A.Transport.JSONRPC do
         |> Keyword.put_new(:receive_timeout, 30_000)
         |> Keyword.merge(method: :post, url: url, headers: headers, body: Jason.encode!(payload))
 
-      resp = Req.request(req_opts)
+      resp = request_with_auth_retry(req_opts, config)
 
       case resp do
         {:ok, %{status: status} = response} when status in 200..299 ->
@@ -233,6 +233,25 @@ defmodule A2A.Transport.JSONRPC do
           {:error, A2A.Error.new(:transport_error, inspect(reason))}
       end
     end)
+  end
+
+  defp request_with_auth_retry(req_opts, config) do
+    case Req.request(req_opts) do
+      {:ok, %{status: 401} = response} ->
+        challenge = response_header(response.headers, "www-authenticate")
+
+        case A2A.Client.Config.auth_challenge_headers(config, challenge) do
+          {:ok, challenge_headers} ->
+            retried_headers = merge_headers(req_opts[:headers] || [], challenge_headers)
+            Req.request(Keyword.put(req_opts, :headers, retried_headers))
+
+          :skip ->
+            {:ok, response}
+        end
+
+      other ->
+        other
+    end
   end
 
   defp ensure_content_type(headers) do
@@ -364,5 +383,52 @@ defmodule A2A.Transport.JSONRPC do
 
   defp build_url(base, path) do
     URI.merge(base, path) |> to_string()
+  end
+
+  defp response_header(headers, name) do
+    downcased = String.downcase(name)
+
+    cond do
+      is_map(headers) ->
+        headers
+        |> Enum.find_value(fn {key, values} ->
+          if String.downcase(to_string(key)) == downcased do
+            case values do
+              [value | _] -> value
+              value when is_binary(value) -> value
+              _ -> nil
+            end
+          end
+        end)
+
+      is_list(headers) ->
+        Enum.find_value(headers, fn
+          {key, value} when is_binary(key) and is_binary(value) ->
+            if String.downcase(key) == downcased, do: value, else: nil
+
+          {key, [value | _]} when is_binary(key) and is_binary(value) ->
+            if String.downcase(key) == downcased, do: value, else: nil
+
+          _ ->
+            nil
+        end)
+
+      true ->
+        nil
+    end
+  end
+
+  defp merge_headers(existing, updates) do
+    update_keys =
+      updates
+      |> Enum.map(fn {k, _v} -> String.downcase(k) end)
+      |> MapSet.new()
+
+    existing =
+      Enum.reject(existing, fn {k, _v} ->
+        MapSet.member?(update_keys, String.downcase(k))
+      end)
+
+    existing ++ updates
   end
 end

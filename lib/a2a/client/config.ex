@@ -73,6 +73,26 @@ defmodule A2A.Client.Config do
     headers
   end
 
+  @spec auth_challenge_headers(t(), String.t() | nil) :: {:ok, list({String.t(), String.t()})} | :skip
+  def auth_challenge_headers(%__MODULE__{auth: {module, opts}}, challenge)
+      when is_atom(module) do
+    if function_exported?(module, :on_auth_challenge, 2) do
+      normalize_auth_challenge_result(apply(module, :on_auth_challenge, [challenge, opts]))
+    else
+      :skip
+    end
+  end
+
+  def auth_challenge_headers(%__MODULE__{auth: fun}, challenge) when is_function(fun, 1) do
+    normalize_auth_challenge_result(fun.(challenge))
+  end
+
+  def auth_challenge_headers(_config, _challenge), do: :skip
+
+  defp normalize_auth_challenge_result({:ok, headers}) when is_list(headers), do: {:ok, headers}
+  defp normalize_auth_challenge_result(headers) when is_list(headers), do: {:ok, headers}
+  defp normalize_auth_challenge_result(_), do: :skip
+
   defp maybe_add_extensions(headers, [], _config), do: headers
 
   defp maybe_add_extensions(headers, extensions, config) do

@@ -253,6 +253,7 @@ defmodule A2A.Server.JSONRPC.Plug do
 
       :push_notification_config_set ->
         with :ok <- ensure_capability(opts.capabilities, :push_notifications),
+             :ok <- ensure_handler(opts.executor, :handle_push_notification_config_set, 3),
              {:ok, task_id} <- require_param(params, "taskId", "Missing taskId"),
              config <- decode_push_config(params),
              {:ok, response} <-
@@ -268,6 +269,7 @@ defmodule A2A.Server.JSONRPC.Plug do
 
       :push_notification_config_get ->
         with :ok <- ensure_capability(opts.capabilities, :push_notifications),
+             :ok <- ensure_handler(opts.executor, :handle_push_notification_config_get, 3),
              {:ok, task_id} <- require_param(params, "taskId", "Missing taskId"),
              {:ok, config_id} <- require_param(params, "configId", "Missing configId"),
              {:ok, response} <-
@@ -283,6 +285,7 @@ defmodule A2A.Server.JSONRPC.Plug do
 
       :push_notification_config_list ->
         with :ok <- ensure_capability(opts.capabilities, :push_notifications),
+             :ok <- ensure_handler(opts.executor, :handle_push_notification_config_list, 3),
              {:ok, task_id} <- require_param(params, "taskId", "Missing taskId"),
              {:ok, response} <-
                run_request(opts, fn ->
@@ -297,6 +300,7 @@ defmodule A2A.Server.JSONRPC.Plug do
 
       :push_notification_config_delete ->
         with :ok <- ensure_capability(opts.capabilities, :push_notifications),
+             :ok <- ensure_handler(opts.executor, :handle_push_notification_config_delete, 3),
              {:ok, task_id} <- require_param(params, "taskId", "Missing taskId"),
              {:ok, config_id} <- require_param(params, "configId", "Missing configId"),
              :ok <-
@@ -313,6 +317,7 @@ defmodule A2A.Server.JSONRPC.Plug do
       :get_extended_agent_card ->
         # Available in both v0.3.0 (agent/getAuthenticatedExtendedCard) and latest (GetExtendedAgentCard)
         with :ok <- ensure_capability(opts.capabilities, :extended_agent_card),
+             :ok <- ensure_handler(opts.executor, :handle_get_extended_agent_card, 1),
              {:ok, card} <-
                run_request(opts, fn ->
                  A2A.Server.ExecutorRunner.call(opts.executor, :handle_get_extended_agent_card, [

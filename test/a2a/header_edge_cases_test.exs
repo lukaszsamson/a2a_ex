@@ -19,6 +19,26 @@ defmodule A2A.HeaderEdgeCasesTest do
     assert A2A.Extension.missing_required(requested, ["urn:two", "urn:three"]) == ["urn:three"]
   end
 
+  test "metadata helpers read and write extension metadata" do
+    metadata =
+      %{}
+      |> A2A.Extension.metadata_put("urn:example:ext", "enabled", true)
+      |> A2A.Extension.metadata_put("urn:example:ext", "mode", "strict")
+
+    assert A2A.Extension.metadata_get(metadata, "urn:example:ext", "enabled") == true
+    assert A2A.Extension.metadata_get(metadata, "urn:example:ext", "mode") == "strict"
+    assert A2A.Extension.metadata_get(metadata, "urn:missing", "value", "default") == "default"
+  end
+
+  test "format_header trims blanks and is idempotent with parse_header" do
+    extensions = [" urn:one ", "", "urn:two", "  "]
+
+    formatted = A2A.Extension.format_header(extensions)
+
+    assert formatted == "urn:one, urn:two"
+    assert A2A.Extension.parse_header(formatted) == ["urn:one", "urn:two"]
+  end
+
   test "accepts a2a-version 0.3 and 0.3.0" do
     conn = conn(:get, "/") |> put_req_header("a2a-version", "0.3")
     assert :ok = A2A.Server.Headers.validate_version(conn, :latest)
