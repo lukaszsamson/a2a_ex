@@ -16,6 +16,44 @@ Elixir client and server library for the [Agent2Agent (A2A) protocol](https://a2
 - [v0.3.0](https://a2a-protocol.org/v0.3.0/specification/) and [latest Release Candidate v1.0](https://a2a-protocol.org/latest/specification/)-compatible mode.
 - REST + SSE and JSON-RPC + SSE.
 
+### REST wire format compatibility
+
+By default, REST uses spec-compliant JSON wire format (`wire_format: :spec_json`), e.g.
+`role: "user" | "agent"` and `parts`.
+
+For interoperability with SDKs that use protobuf-style REST JSON (`ROLE_USER` / `content`),
+you can opt in to compatibility mode with `wire_format: :proto_json`.
+
+Client example:
+
+```elixir
+config =
+  A2A.Client.Config.new("https://example.com",
+    transport: A2A.Transport.REST,
+    version: :v0_3,
+    wire_format: :proto_json
+  )
+
+{:ok, result} =
+  A2A.Client.send_message(config,
+    message: %A2A.Types.Message{
+      role: :user,
+      parts: [%A2A.Types.TextPart{text: "Hello"}]
+    }
+  )
+```
+
+Server example:
+
+```elixir
+plug A2A.Server.REST.Plug,
+  executor: MyApp.A2AExecutor,
+  version: :v0_3,
+  wire_format: :proto_json
+```
+
+Use `:proto_json` only as an interoperability workaround; keep `:spec_json` for standards-compliant v0.3 REST deployments.
+
 ## Installation
 
 Add `a2a_ex` to your dependencies:

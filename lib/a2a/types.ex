@@ -4,10 +4,28 @@ defmodule A2A.Types do
   """
 
   @type version :: :v0_3 | :latest
+  @type wire_format :: :spec_json | :proto_json
 
   @spec version_from_opts(keyword()) :: version()
   def version_from_opts(opts) do
     Keyword.get(opts, :version, :v0_3)
+  end
+
+  @spec wire_format_from_opts(keyword()) :: wire_format()
+  def wire_format_from_opts(opts) do
+    case Keyword.get(opts, :wire_format) do
+      :spec_json ->
+        :spec_json
+
+      :proto_json ->
+        :proto_json
+
+      _ ->
+        case version_from_opts(opts) do
+          :latest -> :proto_json
+          _ -> :spec_json
+        end
+    end
   end
 
   @spec decode_datetime(nil | String.t()) :: DateTime.t() | nil

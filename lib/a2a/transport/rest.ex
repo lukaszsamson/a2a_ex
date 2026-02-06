@@ -22,11 +22,20 @@ defmodule A2A.Transport.REST do
           {:ok, A2A.Types.Task.t() | A2A.Types.Message.t()} | {:error, A2A.Error.t()}
   def send_message(%A2A.Client.Config{} = config, %A2A.Types.SendMessageRequest{} = request) do
     url = build_url(config.base_url, base_path(config) <> "/message:send")
-    body = A2A.Types.SendMessageRequest.to_map(request, version: config.version)
+
+    body =
+      A2A.Types.SendMessageRequest.to_map(request,
+        version: config.version,
+        wire_format: config.wire_format
+      )
 
     with {:ok, resp} <- request(:post, url, config, body),
          {:ok, body} <- decode_json_response(resp),
-         response <- A2A.Types.SendMessageResponse.from_map(body, version: config.version) do
+         response <-
+           A2A.Types.SendMessageResponse.from_map(body,
+             version: config.version,
+             wire_format: config.wire_format
+           ) do
       {:ok, response.task || response.message}
     else
       {:error, error} -> {:error, error}
@@ -37,7 +46,12 @@ defmodule A2A.Transport.REST do
           {:ok, A2A.Client.Stream.t()} | {:error, A2A.Error.t()}
   def stream_message(%A2A.Client.Config{} = config, %A2A.Types.SendMessageRequest{} = request) do
     url = build_url(config.base_url, base_path(config) <> "/message:stream")
-    body = A2A.Types.SendMessageRequest.to_map(request, version: config.version)
+
+    body =
+      A2A.Types.SendMessageRequest.to_map(request,
+        version: config.version,
+        wire_format: config.wire_format
+      )
 
     stream_request(config, :post, url, body)
   end
@@ -50,7 +64,8 @@ defmodule A2A.Transport.REST do
 
     with {:ok, resp} <- request(:get, url, config, nil),
          {:ok, body} <- decode_json_response(resp) do
-      {:ok, A2A.Types.Task.from_map(body, version: config.version)}
+      {:ok,
+       A2A.Types.Task.from_map(body, version: config.version, wire_format: config.wire_format)}
     else
       {:error, error} -> {:error, error}
     end
@@ -64,7 +79,11 @@ defmodule A2A.Transport.REST do
 
     with {:ok, resp} <- request(:get, url, config, nil),
          {:ok, body} <- decode_json_response(resp) do
-      {:ok, A2A.Types.ListTasksResponse.from_map(body, version: config.version)}
+      {:ok,
+       A2A.Types.ListTasksResponse.from_map(body,
+         version: config.version,
+         wire_format: config.wire_format
+       )}
     else
       {:error, error} -> {:error, error}
     end
@@ -77,7 +96,8 @@ defmodule A2A.Transport.REST do
 
     with {:ok, resp} <- request(:post, url, config, %{}),
          {:ok, body} <- decode_json_response(resp) do
-      {:ok, A2A.Types.Task.from_map(body, version: config.version)}
+      {:ok,
+       A2A.Types.Task.from_map(body, version: config.version, wire_format: config.wire_format)}
     else
       {:error, error} -> {:error, error}
     end
@@ -191,7 +211,7 @@ defmodule A2A.Transport.REST do
   defp request(method, url, %A2A.Client.Config{} = config, body) do
     payload = if body == nil, do: nil, else: Jason.encode!(body)
     headers = A2A.Client.Config.request_headers(config) |> ensure_content_type(payload)
-    metadata = %{transport: :rest, method: method, url: url}
+    metadata = %{transport: :rest, method: method, url: url, wire_format: config.wire_format}
 
     A2A.Telemetry.span([:a2a, :client, :request], metadata, fn ->
       req_opts =
@@ -248,7 +268,7 @@ defmodule A2A.Transport.REST do
     headers = A2A.Client.Config.request_headers(config) |> ensure_content_type(payload)
     headers = headers ++ extra_headers
     headers = ensure_accept(headers)
-    metadata = %{transport: :rest, method: method, url: url}
+    metadata = %{transport: :rest, method: method, url: url, wire_format: config.wire_format}
 
     A2A.Telemetry.span([:a2a, :client, :request], metadata, fn ->
       req_opts =
@@ -358,7 +378,10 @@ defmodule A2A.Transport.REST do
   end
 
   defp decode_stream_payload(payload, config) when is_map(payload) do
-    A2A.Types.StreamResponse.from_map(payload, version: config.version)
+    A2A.Types.StreamResponse.from_map(payload,
+      version: config.version,
+      wire_format: config.wire_format
+    )
   end
 
   defp attach_raw(%A2A.Error{} = error, raw), do: %{error | raw: raw}

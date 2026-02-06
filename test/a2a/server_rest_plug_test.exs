@@ -31,6 +31,17 @@ defmodule A2A.ServerRESTPlugTest do
     end
   end
 
+  defmodule ProtoMessageExecutor do
+    def handle_send_message(_request, _ctx) do
+      {:ok,
+       %A2A.Types.Message{
+         message_id: "msg-2",
+         role: :agent,
+         parts: [%A2A.Types.TextPart{text: "hello"}]
+       }}
+    end
+  end
+
   @timeout_opts A2A.Server.REST.Plug.init(
                   executor: SlowExecutor,
                   capabilities: %{streaming: true},
@@ -41,6 +52,11 @@ defmodule A2A.ServerRESTPlugTest do
                           request_timeout: 10
                         )
   @latest_opts A2A.Server.REST.Plug.init(executor: A2A.TestExecutor, version: :latest)
+  @proto_opts A2A.Server.REST.Plug.init(executor: A2A.TestExecutor, wire_format: :proto_json)
+  @proto_message_opts A2A.Server.REST.Plug.init(
+                        executor: ProtoMessageExecutor,
+                        wire_format: :proto_json
+                      )
   @push_opts A2A.Server.REST.Plug.init(
                executor: A2A.TestExecutor,
                capabilities: %{push_notifications: true}
@@ -79,6 +95,46 @@ defmodule A2A.ServerRESTPlugTest do
     body = Jason.decode!(conn.resp_body)
     assert body["task"]["id"] == "task-1"
     assert body["task"]["contextId"] == "ctx-1"
+  end
+
+  test "handles proto-json send message payload in compatibility mode" do
+    payload = %{
+      "message" => %{
+        "messageId" => "msg-1",
+        "role" => "ROLE_USER",
+        "content" => [%{"text" => "hello"}]
+      }
+    }
+
+    conn =
+      conn("POST", "/v1/message:send", Jason.encode!(payload))
+      |> put_req_header("content-type", "application/json")
+      |> A2A.Server.REST.Plug.call(@proto_opts)
+
+    assert conn.status == 200
+    body = Jason.decode!(conn.resp_body)
+    assert body["task"]["id"] == "task-1"
+  end
+
+  test "encodes proto-json message response in compatibility mode" do
+    payload = %{
+      "message" => %{
+        "messageId" => "msg-1",
+        "role" => "ROLE_USER",
+        "content" => [%{"text" => "hello"}]
+      }
+    }
+
+    conn =
+      conn("POST", "/v1/message:send", Jason.encode!(payload))
+      |> put_req_header("content-type", "application/json")
+      |> A2A.Server.REST.Plug.call(@proto_message_opts)
+
+    assert conn.status == 200
+    body = Jason.decode!(conn.resp_body)
+    assert body["message"]["role"] == "ROLE_AGENT"
+    assert body["message"]["content"] == [%{"text" => "hello"}]
+    refute Map.has_key?(body["message"], "parts")
   end
 
   test "echoes request id" do

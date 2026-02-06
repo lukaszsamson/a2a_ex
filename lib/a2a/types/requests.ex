@@ -49,26 +49,35 @@ defmodule A2A.Types.SendMessageConfiguration do
       blocking: map["blocking"],
       history_length: map["historyLength"],
       accepted_output_modes: map["acceptedOutputModes"],
-      push_notification_config: decode_config(map["pushNotificationConfig"]),
+      push_notification_config:
+        decode_config(map["pushNotificationConfig"] || map["pushNotification"]),
       raw:
         A2A.Types.drop_raw(map, [
           "blocking",
           "historyLength",
           "acceptedOutputModes",
-          "pushNotificationConfig"
+          "pushNotificationConfig",
+          "pushNotification"
         ])
     }
   end
 
-  @spec to_map(nil | %__MODULE__{}) :: map() | nil
-  def to_map(nil), do: nil
+  @spec to_map(nil | %__MODULE__{}, keyword()) :: map() | nil
+  def to_map(config, opts \\ [])
+  def to_map(nil, _opts), do: nil
 
-  def to_map(%__MODULE__{} = config) do
+  def to_map(%__MODULE__{} = config, opts) do
+    push_config_field =
+      case A2A.Types.wire_format_from_opts(opts) do
+        :proto_json -> "pushNotification"
+        _ -> "pushNotificationConfig"
+      end
+
     %{}
     |> A2A.Types.put_if("blocking", config.blocking)
     |> A2A.Types.put_if("historyLength", config.history_length)
     |> A2A.Types.put_if("acceptedOutputModes", config.accepted_output_modes)
-    |> A2A.Types.put_if("pushNotificationConfig", encode_config(config.push_notification_config))
+    |> A2A.Types.put_if(push_config_field, encode_config(config.push_notification_config))
     |> A2A.Types.merge_raw(config.raw)
   end
 
@@ -102,7 +111,7 @@ defmodule A2A.Types.SendMessageRequest do
   def to_map(%__MODULE__{} = request, opts \\ []) do
     %{}
     |> A2A.Types.put_if("message", encode_message(request.message, opts))
-    |> A2A.Types.put_if("configuration", encode_configuration(request.configuration))
+    |> A2A.Types.put_if("configuration", encode_configuration(request.configuration, opts))
     |> A2A.Types.put_if("metadata", request.metadata)
     |> A2A.Types.put_if("tenant", request.tenant)
     |> A2A.Types.merge_raw(request.raw)
@@ -115,8 +124,10 @@ defmodule A2A.Types.SendMessageRequest do
 
   defp decode_configuration(nil), do: nil
   defp decode_configuration(map), do: A2A.Types.SendMessageConfiguration.from_map(map)
-  defp encode_configuration(nil), do: nil
-  defp encode_configuration(config), do: A2A.Types.SendMessageConfiguration.to_map(config)
+  defp encode_configuration(nil, _opts), do: nil
+
+  defp encode_configuration(config, opts),
+    do: A2A.Types.SendMessageConfiguration.to_map(config, opts)
 end
 
 defmodule A2A.Types.SendMessageResponse do

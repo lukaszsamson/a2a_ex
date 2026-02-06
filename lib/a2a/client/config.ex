@@ -13,6 +13,7 @@ defmodule A2A.Client.Config do
     :rest_base_path,
     :agent_card_path,
     :subscribe_verb,
+    :wire_format,
     :auth,
     :req_options,
     :transport_opts
@@ -40,6 +41,7 @@ defmodule A2A.Client.Config do
         ),
       agent_card_path: Keyword.get(opts, :agent_card_path, "/.well-known/agent-card.json"),
       subscribe_verb: Keyword.get(opts, :subscribe_verb, :post),
+      wire_format: Keyword.get(opts, :wire_format, :spec_json),
       auth: Keyword.get(opts, :auth),
       req_options: Keyword.get(opts, :req_options, []),
       transport_opts: Keyword.get(opts, :transport_opts, [])

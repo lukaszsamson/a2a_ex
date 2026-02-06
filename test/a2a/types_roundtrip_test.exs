@@ -24,8 +24,10 @@ defmodule A2A.TypesRoundtripTest do
 
         :latest ->
           assert map["role"] == "ROLE_USER"
+          assert is_list(map["content"])
           refute Map.has_key?(map, "kind")
-          refute Enum.any?(map["parts"], &Map.has_key?(&1, "kind"))
+          refute Map.has_key?(map, "parts")
+          refute Enum.any?(map["content"], &Map.has_key?(&1, "kind"))
       end
     end
   end

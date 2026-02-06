@@ -11,6 +11,7 @@ defmodule A2A.Server.REST.Plug do
 
     %{executor: executor, version: Keyword.get(opts, :version, :v0_3)}
     |> Map.put(:base_path, Keyword.get(opts, :base_path, default_base_path(opts)))
+    |> Map.put(:wire_format, Keyword.get(opts, :wire_format, :spec_json))
     |> Map.put(:capabilities, Keyword.get(opts, :capabilities, %{}))
     |> Map.put(:required_extensions, Keyword.get(opts, :required_extensions, []))
     |> Map.put(:subscribe_verb, Keyword.get(opts, :subscribe_verb, :post))
@@ -88,7 +89,7 @@ defmodule A2A.Server.REST.Plug do
 
   defp handle_send_message(conn, opts, extensions) do
     with {:ok, body} <- read_json(conn),
-         request <- A2A.Types.SendMessageRequest.from_map(body, version: opts.version),
+         request <- A2A.Types.SendMessageRequest.from_map(body, type_opts(opts)),
          {:ok, response} <-
            run_request(opts, fn ->
              A2A.Server.ExecutorRunner.call(opts.executor, :handle_send_message, [
@@ -107,7 +108,7 @@ defmodule A2A.Server.REST.Plug do
     with :ok <- ensure_capability(opts.capabilities, :streaming),
          :ok <- ensure_handler(opts.executor, :handle_stream_message, 3),
          {:ok, body} <- read_json(conn),
-         request <- A2A.Types.SendMessageRequest.from_map(body, version: opts.version) do
+         request <- A2A.Types.SendMessageRequest.from_map(body, type_opts(opts)) do
       conn = start_stream(conn, extensions)
       stream = stream_state(conn, opts.stream_task_first)
       emit = fn event -> stream_emit(stream, event, opts) end
@@ -143,7 +144,7 @@ defmodule A2A.Server.REST.Plug do
                ctx(conn, extensions)
              ])
            end) do
-      send_json(conn, 200, A2A.Types.Task.to_map(response, version: opts.version), extensions)
+      send_json(conn, 200, A2A.Types.Task.to_map(response, type_opts(opts)), extensions)
     else
       {:error, error} -> send_error(conn, error, extensions)
     end
@@ -162,7 +163,7 @@ defmodule A2A.Server.REST.Plug do
       send_json(
         conn,
         200,
-        A2A.Types.ListTasksResponse.to_map(response, version: opts.version),
+        A2A.Types.ListTasksResponse.to_map(response, type_opts(opts)),
         extensions
       )
     else
@@ -184,7 +185,7 @@ defmodule A2A.Server.REST.Plug do
             send_json(
               conn,
               200,
-              A2A.Types.Task.to_map(response, version: opts.version),
+              A2A.Types.Task.to_map(response, type_opts(opts)),
               extensions
             )
           else
@@ -430,7 +431,7 @@ defmodule A2A.Server.REST.Plug do
   defp maybe_chunk_response(conn, response, opts), do: chunk_struct(conn, response, opts)
 
   defp chunk_struct(conn, struct, opts) do
-    payload = A2A.Server.SSE.encode_struct(wrap_stream(struct), version: opts.version)
+    payload = A2A.Server.SSE.encode_struct(wrap_stream(struct), type_opts(opts))
 
     case chunk(conn, payload) do
       {:ok, conn} -> conn
@@ -489,15 +490,21 @@ defmodule A2A.Server.REST.Plug do
   end
 
   defp wrap_message_response(%A2A.Types.Task{} = task, opts) do
-    A2A.Types.SendMessageResponse.to_map(%A2A.Types.SendMessageResponse{task: task},
-      version: opts.version
+    A2A.Types.SendMessageResponse.to_map(
+      %A2A.Types.SendMessageResponse{task: task},
+      type_opts(opts)
     )
   end
 
   defp wrap_message_response(%A2A.Types.Message{} = message, opts) do
-    A2A.Types.SendMessageResponse.to_map(%A2A.Types.SendMessageResponse{message: message},
-      version: opts.version
+    A2A.Types.SendMessageResponse.to_map(
+      %A2A.Types.SendMessageResponse{message: message},
+      type_opts(opts)
     )
+  end
+
+  defp type_opts(opts) do
+    [version: opts.version, wire_format: opts.wire_format]
   end
 
   defp read_json(conn) do

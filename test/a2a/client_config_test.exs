@@ -128,6 +128,14 @@ defmodule A2A.ClientConfigTest do
     assert {"authorization", "Bearer fn"} in headers
   end
 
+  test "defaults to spec JSON wire format and allows override" do
+    default = A2A.Client.Config.new("https://example.com")
+    proto = A2A.Client.Config.new("https://example.com", wire_format: :proto_json)
+
+    assert default.wire_format == :spec_json
+    assert proto.wire_format == :proto_json
+  end
+
   test "allows per-request extensions override" do
     config = A2A.Client.Config.new("https://example.com")
 

@@ -1,7 +1,7 @@
 defmodule A2A.MessageTest do
   use ExUnit.Case, async: true
 
-  test "encodes role and parts across versions" do
+  test "encodes role and message payload across versions" do
     message = %A2A.Types.Message{
       message_id: "msg-1",
       role: :user,
@@ -14,7 +14,8 @@ defmodule A2A.MessageTest do
 
     latest_map = A2A.Types.Message.to_map(message, version: :latest)
     assert latest_map["role"] == "ROLE_USER"
-    assert latest_map["parts"] == [%{"text" => "Hello"}]
+    assert latest_map["content"] == [%{"text" => "Hello"}]
+    refute Map.has_key?(latest_map, "parts")
 
     decoded = A2A.Types.Message.from_map(v0_map, version: :v0_3)
     assert decoded.role == :user

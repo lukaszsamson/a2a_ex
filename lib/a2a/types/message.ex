@@ -31,7 +31,7 @@ defmodule A2A.Types.FilePart do
   def from_map(map) do
     %__MODULE__{
       name: map["name"],
-      media_type: map["mediaType"],
+      media_type: map["mediaType"] || map["mimeType"],
       file_with_bytes: map["fileWithBytes"],
       file_with_uri: map["fileWithUri"],
       metadata: map["metadata"],
@@ -107,9 +107,15 @@ defmodule A2A.Types.Part do
   end
 
   def encode(%A2A.Types.FilePart{} = part, opts) do
+    media_type_key =
+      case A2A.Types.wire_format_from_opts(opts) do
+        :proto_json -> "mimeType"
+        _ -> "mediaType"
+      end
+
     %{}
     |> A2A.Types.put_if("name", part.name)
-    |> A2A.Types.put_if("mediaType", part.media_type)
+    |> A2A.Types.put_if(media_type_key, part.media_type)
     |> A2A.Types.put_if("fileWithBytes", part.file_with_bytes)
     |> A2A.Types.put_if("fileWithUri", part.file_with_uri)
     |> A2A.Types.put_if("metadata", part.metadata)
@@ -138,8 +144,8 @@ defmodule A2A.Types.Part do
   end
 
   defp maybe_put_kind(map, kind, opts) do
-    case A2A.Types.version_from_opts(opts) do
-      :latest -> map
+    case A2A.Types.wire_format_from_opts(opts) do
+      :proto_json -> map
       _ -> A2A.Types.put_if(map, "kind", kind)
     end
   end
@@ -167,13 +173,15 @@ defmodule A2A.Types.Message do
 
   @spec from_map(map(), keyword()) :: %__MODULE__{}
   def from_map(map, _opts \\ []) do
+    parts = map["parts"] || map["content"]
+
     %__MODULE__{
       message_id: map["messageId"],
       role: decode_role(map["role"]),
       context_id: map["contextId"],
       task_id: map["taskId"],
       reference_task_ids: map["referenceTaskIds"],
-      parts: decode_parts(map["parts"]),
+      parts: decode_parts(parts),
       metadata: map["metadata"],
       extensions: map["extensions"],
       kind: map["kind"],
@@ -185,6 +193,7 @@ defmodule A2A.Types.Message do
           "taskId",
           "referenceTaskIds",
           "parts",
+          "content",
           "metadata",
           "extensions",
           "kind"
@@ -194,13 +203,19 @@ defmodule A2A.Types.Message do
 
   @spec to_map(%__MODULE__{}, keyword()) :: map()
   def to_map(%__MODULE__{} = message, opts \\ []) do
+    parts_field =
+      case A2A.Types.wire_format_from_opts(opts) do
+        :proto_json -> "content"
+        _ -> "parts"
+      end
+
     %{}
     |> A2A.Types.put_if("messageId", message.message_id)
     |> A2A.Types.put_if("role", encode_role(message.role, opts))
     |> A2A.Types.put_if("contextId", message.context_id)
     |> A2A.Types.put_if("taskId", message.task_id)
     |> A2A.Types.put_if("referenceTaskIds", message.reference_task_ids)
-    |> A2A.Types.put_if("parts", encode_parts(message.parts, opts))
+    |> A2A.Types.put_if(parts_field, encode_parts(message.parts, opts))
     |> A2A.Types.put_if("metadata", message.metadata)
     |> A2A.Types.put_if("extensions", message.extensions)
     |> maybe_put_kind(message.kind || "message", opts)
@@ -220,8 +235,8 @@ defmodule A2A.Types.Message do
   defp decode_role(role), do: role
 
   defp encode_role(role, opts) do
-    case A2A.Types.version_from_opts(opts) do
-      :latest ->
+    case A2A.Types.wire_format_from_opts(opts) do
+      :proto_json ->
         case role do
           :user -> "ROLE_USER"
           :agent -> "ROLE_AGENT"
@@ -238,8 +253,8 @@ defmodule A2A.Types.Message do
   end
 
   defp maybe_put_kind(map, kind, opts) do
-    case A2A.Types.version_from_opts(opts) do
-      :latest -> map
+    case A2A.Types.wire_format_from_opts(opts) do
+      :proto_json -> map
       _ -> A2A.Types.put_if(map, "kind", kind)
     end
   end

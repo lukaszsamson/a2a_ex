@@ -206,7 +206,10 @@ defmodule A2A.Client do
           request_opts
 
         map when is_map(map) ->
-          A2A.Types.SendMessageRequest.from_map(map, version: config.version)
+          A2A.Types.SendMessageRequest.from_map(map,
+            version: config.version,
+            wire_format: config.wire_format
+          )
 
         keyword when is_list(keyword) ->
           build_send_message_from_keyword(keyword, config)
@@ -226,8 +229,12 @@ defmodule A2A.Client do
     }
 
     A2A.Types.SendMessageRequest.from_map(
-      A2A.Types.SendMessageRequest.to_map(request, version: config.version),
-      version: config.version
+      A2A.Types.SendMessageRequest.to_map(request,
+        version: config.version,
+        wire_format: config.wire_format
+      ),
+      version: config.version,
+      wire_format: config.wire_format
     )
   end
 
