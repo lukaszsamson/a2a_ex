@@ -7,6 +7,8 @@ defmodule A2A.Server.ExecutorRunner do
   def call(executor, fun, args) when is_list(args) do
     case executor do
       {module, exec_opts} when is_atom(module) ->
+        ensure_module_loaded!(module)
+
         if function_exported?(module, fun, length(args) + 1) do
           apply(module, fun, [exec_opts | args])
         else
@@ -14,6 +16,7 @@ defmodule A2A.Server.ExecutorRunner do
         end
 
       module when is_atom(module) ->
+        ensure_module_loaded!(module)
         apply(module, fun, args)
     end
   end
@@ -22,13 +25,23 @@ defmodule A2A.Server.ExecutorRunner do
   def exported?(executor, fun, arity) do
     case executor do
       {module, _exec_opts} when is_atom(module) ->
+        ensure_module_loaded!(module)
         function_exported?(module, fun, arity + 1) or function_exported?(module, fun, arity)
 
       module when is_atom(module) ->
+        ensure_module_loaded!(module)
         function_exported?(module, fun, arity)
 
       _ ->
         false
+    end
+  end
+
+  defp ensure_module_loaded!(module) when is_atom(module) do
+    if Code.ensure_loaded?(module) do
+      :ok
+    else
+      raise ArgumentError, "Executor module not loaded: #{inspect(module)}"
     end
   end
 end

@@ -10,6 +10,17 @@ defmodule A2A.ExecutorRunnerTest do
     def handle_get_task(task_id, ctx), do: {:without_opts, task_id, ctx}
   end
 
+  defmodule LazyTaskExecutor do
+    def handle_send_message(request, _ctx) do
+      {:ok,
+       %A2A.Types.Task{
+         id: "task-1",
+         context_id: request.message.context_id || "ctx-1",
+         status: %A2A.Types.TaskStatus{state: :submitted}
+       }}
+    end
+  end
+
   test "calls module callback directly for plain executor" do
     assert {:plain, :request, %{foo: :bar}} =
              A2A.Server.ExecutorRunner.call(PlainExecutor, :handle_send_message, [
@@ -45,5 +56,20 @@ defmodule A2A.ExecutorRunnerTest do
     assert A2A.Server.ExecutorRunner.exported?({OptExecutor, %{}}, :handle_send_message, 2)
     assert A2A.Server.ExecutorRunner.exported?({OptExecutor, %{}}, :handle_get_task, 2)
     refute A2A.Server.ExecutorRunner.exported?({OptExecutor, %{}}, :does_not_exist, 1)
+  end
+
+  test "supports lazily loaded modules when selecting arity" do
+    assert Code.ensure_loaded?(A2A.Server.TaskStoreExecutor)
+
+    request = %A2A.Types.SendMessageRequest{
+      message: %A2A.Types.Message{message_id: "msg-1", role: :user, parts: []}
+    }
+
+    assert {:ok, %A2A.Types.Task{id: "task-1"}} =
+             A2A.Server.ExecutorRunner.call(
+               {A2A.Server.TaskStoreExecutor, %{executor: LazyTaskExecutor, task_store: nil}},
+               :handle_send_message,
+               [request, %{}]
+             )
   end
 end

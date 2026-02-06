@@ -267,10 +267,11 @@ defmodule A2A.Transport.REST do
   end
 
   defp decode_json(body) when is_map(body), do: {:ok, body}
+  defp decode_json(body) when is_list(body), do: {:ok, body}
 
   defp decode_json(body) when is_binary(body) do
     case Jason.decode(body) do
-      {:ok, map} -> {:ok, map}
+      {:ok, decoded} when is_map(decoded) or is_list(decoded) -> {:ok, decoded}
       {:error, _} -> {:error, A2A.Error.new(:invalid_agent_response, "Invalid JSON response")}
     end
   end
