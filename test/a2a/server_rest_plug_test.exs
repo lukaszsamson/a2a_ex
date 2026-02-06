@@ -61,6 +61,11 @@ defmodule A2A.ServerRESTPlugTest do
                executor: A2A.TestExecutor,
                capabilities: %{push_notifications: true}
              )
+  @push_latest_opts A2A.Server.REST.Plug.init(
+                      executor: A2A.TestExecutor,
+                      version: :latest,
+                      capabilities: %{push_notifications: true}
+                    )
   @extended_opts A2A.Server.REST.Plug.init(
                    executor: A2A.TestExecutor,
                    version: :latest,
@@ -233,11 +238,36 @@ defmodule A2A.ServerRESTPlugTest do
 
     assert conn.status == 200
     body = Jason.decode!(conn.resp_body)
-    assert [%{"id" => "cfg-1"}] = body["pushNotificationConfigs"]
+    assert [%{"id" => "cfg-1"}] = body
+  end
+
+  test "handles latest push notification config list with configs wrapper" do
+    conn =
+      conn("GET", "/tasks/task-1/pushNotificationConfigs")
+      |> A2A.Server.REST.Plug.call(@push_latest_opts)
+
+    assert conn.status == 200
+    body = Jason.decode!(conn.resp_body)
+    assert [%{"id" => "cfg-1"}] = body["configs"]
   end
 
   test "handles extended agent card" do
     conn = conn("GET", "/extendedAgentCard") |> A2A.Server.REST.Plug.call(@extended_opts)
+
+    assert conn.status == 200
+    body = Jason.decode!(conn.resp_body)
+    assert body["name"] == "extended"
+  end
+
+  test "handles v0.3 card endpoint" do
+    v0_card_opts =
+      A2A.Server.REST.Plug.init(
+        executor: A2A.TestExecutor,
+        version: :v0_3,
+        capabilities: %{extended_agent_card: true}
+      )
+
+    conn = conn("GET", "/v1/card") |> A2A.Server.REST.Plug.call(v0_card_opts)
 
     assert conn.status == 200
     body = Jason.decode!(conn.resp_body)

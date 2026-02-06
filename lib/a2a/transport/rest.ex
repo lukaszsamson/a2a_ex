@@ -132,7 +132,7 @@ defmodule A2A.Transport.REST do
     url =
       build_url(config.base_url, base_path(config) <> "/tasks/#{task_id}/pushNotificationConfigs")
 
-    body = A2A.Types.PushNotificationConfig.to_map(request)
+    body = encode_push_config_set_request(request, config.version)
 
     with {:ok, resp} <- request(:post, url, config, body),
          {:ok, body} <- decode_json_response(resp) do
@@ -194,17 +194,19 @@ defmodule A2A.Transport.REST do
   @spec get_extended_agent_card(A2A.Client.Config.t()) ::
           {:ok, A2A.Types.AgentCard.t()} | {:error, A2A.Error.t()}
   def get_extended_agent_card(%A2A.Client.Config{} = config) do
-    if config.version == :latest do
-      url = build_url(config.base_url, base_path(config) <> "/extendedAgentCard")
-
-      with {:ok, resp} <- request(:get, url, config, nil),
-           {:ok, body} <- decode_json_response(resp) do
-        {:ok, A2A.Types.AgentCard.from_map(body)}
-      else
-        {:error, error} -> {:error, error}
+    path =
+      case config.version do
+        :latest -> "/extendedAgentCard"
+        _ -> "/card"
       end
+
+    url = build_url(config.base_url, base_path(config) <> path)
+
+    with {:ok, resp} <- request(:get, url, config, nil),
+         {:ok, body} <- decode_json_response(resp) do
+      {:ok, A2A.Types.AgentCard.from_map(body)}
     else
-      {:error, A2A.Error.new(:unsupported_operation, "Extended agent card not supported")}
+      {:error, error} -> {:error, error}
     end
   end
 
@@ -352,6 +354,16 @@ defmodule A2A.Transport.REST do
   end
 
   defp decode_push_config_list(_), do: []
+
+  defp encode_push_config_set_request(request, :latest) do
+    # latest proto-style request uses "config" wrapper
+    %{"config" => A2A.Types.PushNotificationConfig.to_map(request)}
+  end
+
+  defp encode_push_config_set_request(request, _) do
+    # v0.3 HTTP+JSON uses "config" wrapper
+    %{"config" => A2A.Types.PushNotificationConfig.to_map(request)}
+  end
 
   defp error_from_response(status, body) do
     case decode_json(body) do

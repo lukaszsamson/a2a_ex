@@ -78,6 +78,9 @@ defmodule A2A.Server.REST.Plug do
           {"GET", ["extendedAgentCard"]} ->
             handle_extended_agent_card(conn, opts, extensions)
 
+          {"GET", ["card"]} ->
+            handle_card(conn, opts, extensions)
+
           _ ->
             send_resp(conn, 404, "")
         end
@@ -235,7 +238,7 @@ defmodule A2A.Server.REST.Plug do
   defp handle_push_config_set(conn, opts, task_id, extensions) do
     with :ok <- ensure_capability(opts.capabilities, :push_notifications),
          {:ok, body} <- read_json(conn),
-         config <- A2A.Types.PushNotificationConfig.from_map(body),
+         config <- decode_push_config_set_request(body),
          {:ok, response} <-
            run_request(opts, fn ->
              A2A.Server.ExecutorRunner.call(opts.executor, :handle_push_notification_config_set, [
@@ -283,7 +286,7 @@ defmodule A2A.Server.REST.Plug do
       send_json(
         conn,
         200,
-        %{"pushNotificationConfigs" => Enum.map(response, &encode_push_config/1)},
+        encode_push_config_list(response, opts.version),
         extensions
       )
     else
@@ -311,6 +314,21 @@ defmodule A2A.Server.REST.Plug do
 
   defp handle_extended_agent_card(conn, opts, extensions) do
     with :ok <- ensure_latest(opts.version),
+         :ok <- ensure_capability(opts.capabilities, :extended_agent_card),
+         {:ok, card} <-
+           run_request(opts, fn ->
+             A2A.Server.ExecutorRunner.call(opts.executor, :handle_get_extended_agent_card, [
+               ctx(conn, extensions)
+             ])
+           end) do
+      send_json(conn, 200, A2A.Types.AgentCard.to_map(card, version: opts.version), extensions)
+    else
+      {:error, error} -> send_error(conn, error, extensions)
+    end
+  end
+
+  defp handle_card(conn, opts, extensions) do
+    with :ok <- ensure_v0_3(opts.version),
          :ok <- ensure_capability(opts.capabilities, :extended_agent_card),
          {:ok, card} <-
            run_request(opts, fn ->
@@ -630,6 +648,32 @@ defmodule A2A.Server.REST.Plug do
 
   defp ensure_latest(_),
     do: {:error, A2A.Error.new(:unsupported_operation, "Extended agent card not supported")}
+
+  defp ensure_v0_3(:latest),
+    do: {:error, A2A.Error.new(:unsupported_operation, "Card endpoint not supported")}
+
+  defp ensure_v0_3(_), do: :ok
+
+  defp decode_push_config_set_request(%{"config" => %{"pushNotificationConfig" => config}})
+       when is_map(config) do
+    A2A.Types.PushNotificationConfig.from_map(config)
+  end
+
+  defp decode_push_config_set_request(%{"config" => config}) when is_map(config) do
+    A2A.Types.PushNotificationConfig.from_map(config)
+  end
+
+  defp decode_push_config_set_request(config) when is_map(config) do
+    A2A.Types.PushNotificationConfig.from_map(config)
+  end
+
+  defp encode_push_config_list(response, :latest) do
+    %{"configs" => Enum.map(response, &encode_push_config/1)}
+  end
+
+  defp encode_push_config_list(response, _) do
+    Enum.map(response, &encode_push_config/1)
+  end
 
   defp encode_push_config(%A2A.Types.PushNotificationConfig{} = config) do
     A2A.Types.PushNotificationConfig.to_map(config)
