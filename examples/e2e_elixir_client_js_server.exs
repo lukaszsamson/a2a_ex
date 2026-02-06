@@ -4,6 +4,8 @@
 # - discovery + transport negotiation via agent card
 # - auth challenge/retry (401 + WWW-Authenticate)
 # - REST and JSON-RPC send_message
+# - JSON-RPC task lifecycle (get/cancel/resubscribe)
+# - JSON-RPC list/subscribe behavior (currently unsupported by JS SDK server)
 # - REST and JSON-RPC stream_message
 # - push config lifecycle (set/get/list/delete) + real webhook delivery
 #
@@ -118,6 +120,49 @@ defmodule E2E.ElixirClientJSServer do
 
     {task_id, _ctx_id} = assert_task_and_echo(negotiated_response, "negotiated")
 
+    # JSON-RPC task lifecycle parity.
+    {:ok, %A2A.Types.Task{id: ^task_id}} =
+      A2A.Client.get_task(rpc_base, task_id,
+        transport: A2A.Transport.JSONRPC,
+        auth: {AuthRetry, []}
+      )
+
+    {:ok, resub_stream} =
+      A2A.Client.resubscribe(rpc_base, task_id, %{},
+        transport: A2A.Transport.JSONRPC,
+        auth: {AuthRetry, []}
+      )
+
+    resub_events = Enum.take(resub_stream, 1)
+    assert(length(resub_events) >= 1, "expected at least one resubscribe event")
+
+    # JS SDK server currently does not implement tasks/list or tasks/subscribe.
+    list_resp =
+      A2A.Client.list_tasks(rpc_base, %{},
+        transport: A2A.Transport.JSONRPC,
+        auth: {AuthRetry, []}
+      )
+
+    assert(match?({:error, %A2A.Error{code: -32601}}, list_resp), "expected tasks/list to be unsupported on JS SDK server")
+
+    subscribe_resp =
+      A2A.Client.subscribe(rpc_base, task_id,
+        transport: A2A.Transport.JSONRPC,
+        auth: {AuthRetry, []}
+      )
+
+    case subscribe_resp do
+      {:ok, stream} ->
+        _events = Enum.take(stream, 1)
+        :ok
+
+      {:error, %A2A.Error{code: -32601}} ->
+        :ok
+
+      {:error, %A2A.Error{code: code}} ->
+        raise "unexpected tasks/subscribe error code: #{inspect(code)}"
+    end
+
     # Explicit REST transport, with v0.3.10 proto-json compatibility and mounted path.
     {:ok, rest_response} =
       A2A.Client.send_message(base, [message: user_message("hello-from-elixir-rest")],
@@ -228,6 +273,21 @@ defmodule E2E.ElixirClientJSServer do
       A2A.Client.push_notification_config_delete(rpc_base, task_id, cfg_id,
         transport: A2A.Transport.JSONRPC,
         transport_opts: [jsonrpc_push_compat: :js_sdk],
+        auth: {AuthRetry, []}
+      )
+
+    # Cancel on a dedicated task so it doesn't affect push-followup checks.
+    {:ok, cancel_seed} =
+      A2A.Client.send_message(rpc_base, [message: user_message("cancel-seed")],
+        transport: A2A.Transport.JSONRPC,
+        auth: {AuthRetry, []}
+      )
+
+    {cancel_task_id, _ctx_id} = assert_task_and_echo(cancel_seed, "cancel-seed")
+
+    {:ok, %A2A.Types.Task{id: ^cancel_task_id, status: %A2A.Types.TaskStatus{state: :canceled}}} =
+      A2A.Client.cancel_task(rpc_base, cancel_task_id,
+        transport: A2A.Transport.JSONRPC,
         auth: {AuthRetry, []}
       )
 

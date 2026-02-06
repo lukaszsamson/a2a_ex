@@ -4,6 +4,7 @@
 // - discovery + transport negotiation from agent card
 // - auth challenge/retry (401 + WWW-Authenticate)
 // - JSON-RPC and REST send_message
+// - task lifecycle parity (get/cancel/resubscribe + list + subscribe)
 // - JSON-RPC and REST sendMessageStream
 // - push config lifecycle (set/get/list/delete) + real webhook delivery
 //
@@ -138,6 +139,63 @@ async function runChecks() {
     throw new Error(`Unexpected negotiated response text: ${JSON.stringify(negotiatedResponse)}`);
   }
 
+  // JSON-RPC lifecycle methods.
+  const rpcTask = await negotiatedClient.getTask({ name: `tasks/${taskId}` });
+  if ((rpcTask?.id ?? rpcTask?.task?.id) !== taskId) {
+    throw new Error(`Unexpected getTask response: ${JSON.stringify(rpcTask)}`);
+  }
+
+  const rpcCanceled = await negotiatedClient.cancelTask({ name: `tasks/${taskId}` });
+  const canceledState = rpcCanceled?.status?.state ?? rpcCanceled?.task?.status?.state;
+  if (canceledState !== "canceled") {
+    throw new Error(`Unexpected cancelTask response: ${JSON.stringify(rpcCanceled)}`);
+  }
+
+  let rpcResubscribeEvents = 0;
+  for await (const event of negotiatedClient.resubscribeTask({ taskId })) {
+    rpcResubscribeEvents += 1;
+    if (rpcResubscribeEvents >= 1) break;
+  }
+  if (rpcResubscribeEvents < 1) {
+    throw new Error("JSON-RPC resubscribe produced no events");
+  }
+
+  const listRpcRes = await authFetch(`${baseUrl}/`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 101,
+      method: "tasks/list",
+      params: {},
+    }),
+  });
+  const listRpcBody = await listRpcRes.json();
+  if (!Array.isArray(listRpcBody?.result?.tasks)) {
+    throw new Error(`Unexpected tasks/list response: ${JSON.stringify(listRpcBody)}`);
+  }
+
+  const subscribeRpcRes = await authFetch(`${baseUrl}/`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 102,
+      method: "tasks/subscribe",
+      params: { taskId },
+    }),
+  });
+  if (!subscribeRpcRes.ok) {
+    throw new Error(`tasks/subscribe failed: ${subscribeRpcRes.status} ${await subscribeRpcRes.text()}`);
+  }
+  const subscribeBody = await subscribeRpcRes.text();
+  if (!subscribeBody.includes("data:")) {
+    throw new Error(`tasks/subscribe did not produce SSE data: ${subscribeBody}`);
+  }
+
   // JSON-RPC streaming
   let streamCount = 0;
   for await (const event of negotiatedClient.sendMessageStream({
@@ -184,6 +242,38 @@ async function runChecks() {
     restResponse?.task?.status?.message?.parts?.find((p) => p?.kind === "text")?.text;
   if (restText !== "elixir-echo:hello-rest") {
     throw new Error(`Unexpected REST response text: ${JSON.stringify(restResponse)}`);
+  }
+
+  // REST lifecycle methods parity.
+  const restGetRes = await authFetch(`${baseUrl}/v1/tasks/${restTaskIdWithMessage}`, { method: "GET" });
+  if (!restGetRes.ok) {
+    throw new Error(`REST get task failed: ${restGetRes.status} ${await restGetRes.text()}`);
+  }
+  const restTask = await restGetRes.json();
+  if ((restTask?.id ?? restTask?.task?.id) !== restTaskIdWithMessage) {
+    throw new Error(`Unexpected REST getTask response: ${JSON.stringify(restTask)}`);
+  }
+
+  const restCancelRes = await authFetch(`${baseUrl}/v1/tasks/${restTaskIdWithMessage}:cancel`, { method: "POST" });
+  if (!restCancelRes.ok) {
+    throw new Error(`REST cancel task failed: ${restCancelRes.status} ${await restCancelRes.text()}`);
+  }
+  const restCanceled = await restCancelRes.json();
+  const restCanceledState = restCanceled?.status?.state ?? restCanceled?.task?.status?.state;
+  if (restCanceledState !== "canceled") {
+    throw new Error(`Unexpected REST cancelTask response: ${JSON.stringify(restCanceled)}`);
+  }
+
+  const restSubscribeRes = await authFetch(`${baseUrl}/v1/tasks/${restTaskIdWithMessage}:subscribe`, {
+    method: "POST",
+    headers: { accept: "text/event-stream" },
+  });
+  if (!restSubscribeRes.ok) {
+    throw new Error(`REST subscribe failed: ${restSubscribeRes.status} ${await restSubscribeRes.text()}`);
+  }
+  const restSubscribeBody = await restSubscribeRes.text();
+  if (!restSubscribeBody.includes("data:")) {
+    throw new Error(`REST subscribe did not produce SSE data: ${restSubscribeBody}`);
   }
 
   const restStreamRes = await authFetch(`${baseUrl}/v1/message:stream`, {

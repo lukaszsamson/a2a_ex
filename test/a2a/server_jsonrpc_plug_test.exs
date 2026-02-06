@@ -367,4 +367,75 @@ defmodule A2A.ServerJSONRPCPlugTest do
     delete_body = Jason.decode!(delete_conn.resp_body)
     assert delete_body["result"] == %{}
   end
+
+  test "tasks/get accepts id param" do
+    payload = %{
+      "jsonrpc" => "2.0",
+      "id" => 14,
+      "method" => "tasks/get",
+      "params" => %{"id" => "task-1"}
+    }
+
+    conn =
+      conn("POST", "/", Jason.encode!(payload))
+      |> put_req_header("content-type", "application/json")
+      |> A2A.Server.JSONRPC.Plug.call(@opts)
+
+    assert conn.status == 200
+    body = Jason.decode!(conn.resp_body)
+    assert get_in(body, ["result", "id"]) == "task-1"
+  end
+
+  test "tasks/cancel accepts id param" do
+    payload = %{
+      "jsonrpc" => "2.0",
+      "id" => 15,
+      "method" => "tasks/cancel",
+      "params" => %{"id" => "task-1"}
+    }
+
+    conn =
+      conn("POST", "/", Jason.encode!(payload))
+      |> put_req_header("content-type", "application/json")
+      |> A2A.Server.JSONRPC.Plug.call(@opts)
+
+    assert conn.status == 200
+    body = Jason.decode!(conn.resp_body)
+    assert get_in(body, ["result", "status", "state"]) == "canceled"
+  end
+
+  test "tasks/resubscribe accepts id param and emits SSE data" do
+    payload = %{
+      "jsonrpc" => "2.0",
+      "id" => 16,
+      "method" => "tasks/resubscribe",
+      "params" => %{"id" => "task-1"}
+    }
+
+    conn =
+      conn("POST", "/", Jason.encode!(payload))
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("accept", "text/event-stream")
+      |> A2A.Server.JSONRPC.Plug.call(@opts)
+
+    assert conn.status == 200
+    assert is_binary(conn.resp_body) and String.contains?(conn.resp_body, "data:")
+  end
+
+  test "tasks/subscribe accepts id param" do
+    payload = %{
+      "jsonrpc" => "2.0",
+      "id" => 17,
+      "method" => "tasks/subscribe",
+      "params" => %{"id" => "task-1"}
+    }
+
+    conn =
+      conn("POST", "/", Jason.encode!(payload))
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("accept", "text/event-stream")
+      |> A2A.Server.JSONRPC.Plug.call(@opts)
+
+    assert conn.status == 200
+  end
 end

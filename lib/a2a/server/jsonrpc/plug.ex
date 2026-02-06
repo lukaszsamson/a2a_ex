@@ -369,6 +369,8 @@ defmodule A2A.Server.JSONRPC.Plug do
   end
 
   defp extract_task_id(%{"name" => "tasks/" <> id}), do: id
+  defp extract_task_id(%{"id" => "tasks/" <> id}), do: id
+  defp extract_task_id(%{"id" => id}) when is_binary(id), do: id
   defp extract_task_id(%{"taskId" => id}), do: id
   defp extract_task_id(_), do: nil
 

@@ -36,7 +36,7 @@ defmodule A2A.Transport.JSONRPC do
   @spec get_task(A2A.Client.Config.t(), String.t(), keyword() | map()) ::
           {:ok, A2A.Types.Task.t()} | {:error, A2A.Error.t()}
   def get_task(%A2A.Client.Config{} = config, task_id, _opts) do
-    call(config, :get_task, %{"name" => "tasks/#{task_id}"}, fn result ->
+    call(config, :get_task, task_id_params(config, task_id), fn result ->
       {:ok, A2A.Types.Task.from_map(result, version: config.version)}
     end)
   end
@@ -57,7 +57,7 @@ defmodule A2A.Transport.JSONRPC do
   @spec cancel_task(A2A.Client.Config.t(), String.t()) ::
           {:ok, A2A.Types.Task.t()} | {:error, A2A.Error.t()}
   def cancel_task(%A2A.Client.Config{} = config, task_id) do
-    call(config, :cancel_task, %{"name" => "tasks/#{task_id}"}, fn result ->
+    call(config, :cancel_task, task_id_params(config, task_id), fn result ->
       {:ok, A2A.Types.Task.from_map(result, version: config.version)}
     end)
   end
@@ -65,13 +65,17 @@ defmodule A2A.Transport.JSONRPC do
   @spec resubscribe(A2A.Client.Config.t(), String.t(), map()) ::
           {:ok, A2A.Client.Stream.t()} | {:error, A2A.Error.t()}
   def resubscribe(%A2A.Client.Config{} = config, task_id, resume) do
-    stream_request(config, :resubscribe, %{"taskId" => task_id, "resume" => resume})
+    stream_request(
+      config,
+      :resubscribe,
+      Map.merge(subscribe_task_params(config, task_id), %{"resume" => resume})
+    )
   end
 
   @spec subscribe(A2A.Client.Config.t(), String.t()) ::
           {:ok, A2A.Client.Stream.t()} | {:error, A2A.Error.t()}
   def subscribe(%A2A.Client.Config{} = config, task_id) do
-    stream_request(config, :subscribe, %{"taskId" => task_id})
+    stream_request(config, :subscribe, subscribe_task_params(config, task_id))
   end
 
   defp stream_request(config, method_key, params) do
@@ -102,7 +106,7 @@ defmodule A2A.Transport.JSONRPC do
           decode_body: false
         )
 
-      case Req.request(req_opts) do
+      case request_with_auth_retry(req_opts, config) do
         {:ok, %{status: status, body: %Req.Response.Async{} = async}} when status in 200..299 ->
           stream =
             async
@@ -380,6 +384,22 @@ defmodule A2A.Transport.JSONRPC do
 
   defp decode_push_config(config) when is_map(config) do
     A2A.Types.PushNotificationConfig.from_map(config)
+  end
+
+  defp task_id_params(%A2A.Client.Config{version: :latest}, task_id) do
+    %{"name" => "tasks/#{task_id}"}
+  end
+
+  defp task_id_params(_config, task_id) do
+    %{"name" => "tasks/#{task_id}", "id" => task_id}
+  end
+
+  defp subscribe_task_params(%A2A.Client.Config{version: :latest}, task_id) do
+    %{"taskId" => task_id}
+  end
+
+  defp subscribe_task_params(_config, task_id) do
+    %{"taskId" => task_id, "id" => task_id}
   end
 
   defp push_config_set_params(config, task_id, request) do

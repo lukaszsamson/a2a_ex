@@ -96,6 +96,92 @@ defmodule A2A.TransportJSONRPCTest do
     end
   end
 
+  defmodule JSONRPCTaskCompatPlug do
+    def init(opts), do: opts
+
+    def call(conn, _opts) do
+      import A2A.TestServerHelpers
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      payload = Jason.decode!(body)
+      id = payload["id"]
+      params = payload["params"] || %{}
+
+      case payload["method"] do
+        "tasks/get" ->
+          if Map.has_key?(params, "id") do
+            send_json(conn, %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "result" => %{"id" => params["id"], "status" => %{"state" => "submitted"}}
+            })
+          else
+            send_json(conn, %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "error" => %{"code" => -32602, "message" => "missing id"}
+            })
+          end
+
+        "tasks/cancel" ->
+          if Map.has_key?(params, "id") do
+            send_json(conn, %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "result" => %{"id" => params["id"], "status" => %{"state" => "canceled"}}
+            })
+          else
+            send_json(conn, %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "error" => %{"code" => -32602, "message" => "missing id"}
+            })
+          end
+
+        "tasks/resubscribe" ->
+          send_stream(conn, id, params)
+
+        "tasks/subscribe" ->
+          send_stream(conn, id, params)
+
+        _ ->
+          send_json(conn, %{
+            "jsonrpc" => "2.0",
+            "id" => id,
+            "error" => %{"code" => -32601, "message" => "Method not found"}
+          })
+      end
+    end
+
+    defp send_stream(conn, id, params) do
+      if Map.has_key?(params, "id") and Map.has_key?(params, "taskId") do
+        event = %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "result" => %{
+            "statusUpdate" => %{
+              "taskId" => params["id"],
+              "contextId" => "ctx-1",
+              "status" => %{"state" => "working"},
+              "final" => false
+            }
+          }
+        }
+
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.send_resp(200, "data: " <> Jason.encode!(event) <> "\n\n")
+      else
+        import A2A.TestServerHelpers
+
+        send_json(conn, %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "error" => %{"code" => -32602, "message" => "missing id/taskId"}
+        })
+      end
+    end
+  end
+
   setup_all do
     server = A2A.TestHTTPServer.start(A2A.TestJSONRPCSuccessPlug)
     on_exit(fn -> A2A.TestHTTPServer.stop(server.ref) end)
@@ -238,5 +324,24 @@ defmodule A2A.TransportJSONRPCTest do
 
     assert :ok =
              A2A.Transport.JSONRPC.push_notification_config_delete(config, "task-1", "cfg-1")
+  end
+
+  test "task lifecycle operations include id compatibility params for v0.3" do
+    server = A2A.TestHTTPServer.start(JSONRPCTaskCompatPlug)
+    on_exit(fn -> A2A.TestHTTPServer.stop(server.ref) end)
+
+    config = A2A.Client.Config.new(server.base_url, transport: A2A.Transport.JSONRPC)
+
+    assert {:ok, %A2A.Types.Task{id: "task-1"}} =
+             A2A.Transport.JSONRPC.get_task(config, "task-1", %{})
+
+    assert {:ok, %A2A.Types.Task{id: "task-1", status: %A2A.Types.TaskStatus{state: :canceled}}} =
+             A2A.Transport.JSONRPC.cancel_task(config, "task-1")
+
+    assert {:ok, resubscribe_stream} = A2A.Transport.JSONRPC.resubscribe(config, "task-1", %{})
+    assert [_ | _] = Enum.take(resubscribe_stream, 1)
+
+    assert {:ok, subscribe_stream} = A2A.Transport.JSONRPC.subscribe(config, "task-1")
+    assert [_ | _] = Enum.take(subscribe_stream, 1)
   end
 end

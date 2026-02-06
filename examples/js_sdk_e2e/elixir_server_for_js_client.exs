@@ -140,6 +140,31 @@ defmodule JSClientE2EExecutor do
     end
   end
 
+  def handle_subscribe(opts, task_id, _ctx, emit) do
+    store = Map.fetch!(opts, :store)
+
+    case JSClientE2EStore.get_task(store, task_id) do
+      nil ->
+        {:error, A2A.Error.new(:task_not_found, "task #{task_id} not found")}
+
+      %A2A.Types.Task{} = task ->
+        emit.(task)
+
+        emit.(%A2A.Types.TaskStatusUpdateEvent{
+          task_id: task_id,
+          context_id: task.context_id,
+          status: task.status,
+          final: true
+        })
+
+        {:ok, :subscribed}
+    end
+  end
+
+  def handle_resubscribe(opts, task_id, _resume, _ctx, emit) do
+    handle_subscribe(opts, task_id, %{}, emit)
+  end
+
   def handle_push_notification_config_set(opts, task_id, config, _ctx) do
     store = Map.fetch!(opts, :store)
 
