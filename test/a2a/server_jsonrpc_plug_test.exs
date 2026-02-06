@@ -72,6 +72,10 @@ defmodule A2A.ServerJSONRPCPlugTest do
                                 executor: SlowQueryExecutor,
                                 request_timeout: 10
                               )
+  @push_opts A2A.Server.JSONRPC.Plug.init(
+               executor: A2A.TestExecutor,
+               capabilities: %{push_notifications: true}
+             )
 
   test "streams send message responses" do
     payload = %{
@@ -291,5 +295,76 @@ defmodule A2A.ServerJSONRPCPlugTest do
     body = Jason.decode!(conn.resp_body)
     assert body["error"]["code"] == -32000
     assert body["error"]["data"]["type"] == "RequestTimeoutError"
+  end
+
+  test "push config set accepts js sdk pushNotificationConfig param" do
+    payload = %{
+      "jsonrpc" => "2.0",
+      "id" => 10,
+      "method" => "tasks/pushNotificationConfig/set",
+      "params" => %{
+        "taskId" => "task-1",
+        "pushNotificationConfig" => %{"id" => "cfg-1", "url" => "https://example.com/webhook"}
+      }
+    }
+
+    conn =
+      conn("POST", "/", Jason.encode!(payload))
+      |> put_req_header("content-type", "application/json")
+      |> A2A.Server.JSONRPC.Plug.call(@push_opts)
+
+    assert conn.status == 200
+    body = Jason.decode!(conn.resp_body)
+    assert body["result"]["id"] == "cfg-1"
+  end
+
+  test "push config get/list/delete accept js sdk id fields" do
+    get_payload = %{
+      "jsonrpc" => "2.0",
+      "id" => 11,
+      "method" => "tasks/pushNotificationConfig/get",
+      "params" => %{"id" => "task-1", "pushNotificationConfigId" => "cfg-1"}
+    }
+
+    get_conn =
+      conn("POST", "/", Jason.encode!(get_payload))
+      |> put_req_header("content-type", "application/json")
+      |> A2A.Server.JSONRPC.Plug.call(@push_opts)
+
+    assert get_conn.status == 200
+    get_body = Jason.decode!(get_conn.resp_body)
+    assert get_body["result"]["id"] == "cfg-1"
+
+    list_payload = %{
+      "jsonrpc" => "2.0",
+      "id" => 12,
+      "method" => "tasks/pushNotificationConfig/list",
+      "params" => %{"id" => "task-1"}
+    }
+
+    list_conn =
+      conn("POST", "/", Jason.encode!(list_payload))
+      |> put_req_header("content-type", "application/json")
+      |> A2A.Server.JSONRPC.Plug.call(@push_opts)
+
+    assert list_conn.status == 200
+    list_body = Jason.decode!(list_conn.resp_body)
+    assert is_list(get_in(list_body, ["result", "pushNotificationConfigs"]))
+
+    delete_payload = %{
+      "jsonrpc" => "2.0",
+      "id" => 13,
+      "method" => "tasks/pushNotificationConfig/delete",
+      "params" => %{"id" => "task-1", "pushNotificationConfigId" => "cfg-1"}
+    }
+
+    delete_conn =
+      conn("POST", "/", Jason.encode!(delete_payload))
+      |> put_req_header("content-type", "application/json")
+      |> A2A.Server.JSONRPC.Plug.call(@push_opts)
+
+    assert delete_conn.status == 200
+    delete_body = Jason.decode!(delete_conn.resp_body)
+    assert delete_body["result"] == %{}
   end
 end

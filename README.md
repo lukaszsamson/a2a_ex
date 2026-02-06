@@ -156,6 +156,60 @@ A2A.Server.Push.deliver(config, task,
 - `examples/rest_client.exs`
 - `examples/jsonrpc_server.exs`
 - `examples/jsonrpc_client.exs`
+- `examples/e2e_protocol_suite.exs` (real transport E2E protocol smoke suite)
+- `examples/e2e_elixir_client_js_server.exs` (Elixir client -> JS SDK server)
+- `examples/e2e_js_client_elixir_server.mjs` (JS SDK client -> Elixir server)
+
+### E2E protocol smoke suite
+
+Run:
+
+```bash
+elixir examples/e2e_protocol_suite.exs
+```
+
+This script starts real local servers and validates, end-to-end:
+
+- REST + JSON-RPC discovery and core task/message flows.
+- Streaming (`message:stream`) event delivery on both transports.
+- Task lifecycle operations (`get`, `list`, `cancel`).
+- Push notification lifecycle (`set/get/list/delete`) with real webhook delivery and token checks.
+- JSON-RPC required extension enforcement and positive/negative extension-header paths.
+
+### Cross-language E2E scripts (official JS SDK)
+
+These scripts use a pinned JS harness at `examples/js_sdk_e2e/package.json` with
+`@a2a-js/sdk` version `0.3.10`.
+
+Run Elixir client against JS SDK server:
+
+```bash
+elixir examples/e2e_elixir_client_js_server.exs
+```
+
+Covers:
+- discovery and interface advertisement checks
+- auth challenge/retry (401 + `WWW-Authenticate`)
+- REST + JSON-RPC `send_message`
+- JSON-RPC streaming assertion
+- transport path checks against official JS SDK server mounts
+
+Run JS SDK client against Elixir server:
+
+```bash
+node examples/e2e_js_client_elixir_server.mjs
+```
+
+Covers:
+- discovery and transport negotiation via `ClientFactory`
+- auth challenge/retry using `createAuthenticatingFetchWithRetry`
+- JSON-RPC `sendMessage` + `sendMessageStream` + push config lifecycle via JS SDK
+- REST `sendMessage` via JS SDK against Elixir `wire_format: :proto_json` compatibility mode
+- REST `message:stream` + push config lifecycle using authenticated raw transport calls
+
+Note: some JS SDK REST stream/push paths still have shape/decoding inconsistencies in this interop setup,
+so the suite validates those REST endpoints with raw authenticated HTTP calls while keeping SDK coverage
+for JSON-RPC and REST `sendMessage`.
 
 ## Security notes
 

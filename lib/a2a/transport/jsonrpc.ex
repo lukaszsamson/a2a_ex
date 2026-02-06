@@ -132,30 +132,27 @@ defmodule A2A.Transport.JSONRPC do
           A2A.Types.PushNotificationConfig.t() | map()
         ) :: {:ok, A2A.Types.PushNotificationConfig.t()} | {:error, A2A.Error.t()}
   def push_notification_config_set(%A2A.Client.Config{} = config, task_id, request) do
-    params = %{
-      "taskId" => task_id,
-      "config" => A2A.Types.PushNotificationConfig.to_map(request)
-    }
+    params = push_config_set_params(config, task_id, request)
 
     call(config, :push_notification_config_set, params, fn result ->
-      {:ok, A2A.Types.PushNotificationConfig.from_map(result)}
+      {:ok, decode_push_config(result)}
     end)
   end
 
   @spec push_notification_config_get(A2A.Client.Config.t(), String.t(), String.t()) ::
           {:ok, A2A.Types.PushNotificationConfig.t()} | {:error, A2A.Error.t()}
   def push_notification_config_get(%A2A.Client.Config{} = config, task_id, config_id) do
-    params = %{"taskId" => task_id, "configId" => config_id}
+    params = push_config_get_params(config, task_id, config_id)
 
     call(config, :push_notification_config_get, params, fn result ->
-      {:ok, A2A.Types.PushNotificationConfig.from_map(result)}
+      {:ok, decode_push_config(result)}
     end)
   end
 
   @spec push_notification_config_list(A2A.Client.Config.t(), String.t(), map()) ::
           {:ok, list(A2A.Types.PushNotificationConfig.t())} | {:error, A2A.Error.t()}
   def push_notification_config_list(%A2A.Client.Config{} = config, task_id, query) do
-    params = Map.merge(%{"taskId" => task_id}, query)
+    params = push_config_list_params(config, task_id, query)
 
     call(config, :push_notification_config_list, params, fn result ->
       {:ok, decode_push_config_list(result)}
@@ -165,7 +162,7 @@ defmodule A2A.Transport.JSONRPC do
   @spec push_notification_config_delete(A2A.Client.Config.t(), String.t(), String.t()) ::
           :ok | {:error, A2A.Error.t()}
   def push_notification_config_delete(%A2A.Client.Config{} = config, task_id, config_id) do
-    params = %{"taskId" => task_id, "configId" => config_id}
+    params = push_config_delete_params(config, task_id, config_id)
 
     call(config, :push_notification_config_delete, params, fn _result ->
       :ok
@@ -364,18 +361,66 @@ defmodule A2A.Transport.JSONRPC do
   end
 
   defp decode_push_config_list(%{"pushNotificationConfigs" => configs}) when is_list(configs) do
-    Enum.map(configs, &A2A.Types.PushNotificationConfig.from_map/1)
+    Enum.map(configs, &decode_push_config/1)
   end
 
   defp decode_push_config_list(%{"configs" => configs}) when is_list(configs) do
-    Enum.map(configs, &A2A.Types.PushNotificationConfig.from_map/1)
+    Enum.map(configs, &decode_push_config/1)
   end
 
   defp decode_push_config_list(configs) when is_list(configs) do
-    Enum.map(configs, &A2A.Types.PushNotificationConfig.from_map/1)
+    Enum.map(configs, &decode_push_config/1)
   end
 
   defp decode_push_config_list(_), do: []
+
+  defp decode_push_config(%{"pushNotificationConfig" => config}) when is_map(config) do
+    A2A.Types.PushNotificationConfig.from_map(config)
+  end
+
+  defp decode_push_config(config) when is_map(config) do
+    A2A.Types.PushNotificationConfig.from_map(config)
+  end
+
+  defp push_config_set_params(config, task_id, request) do
+    config_map = A2A.Types.PushNotificationConfig.to_map(request)
+
+    if js_sdk_push_compat?(config) do
+      %{"taskId" => task_id, "pushNotificationConfig" => config_map}
+    else
+      %{"taskId" => task_id, "config" => config_map}
+    end
+  end
+
+  defp push_config_get_params(config, task_id, config_id) do
+    if js_sdk_push_compat?(config) do
+      %{"id" => task_id, "pushNotificationConfigId" => config_id}
+    else
+      %{"taskId" => task_id, "configId" => config_id}
+    end
+  end
+
+  defp push_config_list_params(config, task_id, query) do
+    if js_sdk_push_compat?(config) do
+      Map.merge(%{"id" => task_id}, query)
+    else
+      Map.merge(%{"taskId" => task_id}, query)
+    end
+  end
+
+  defp push_config_delete_params(config, task_id, config_id) do
+    if js_sdk_push_compat?(config) do
+      %{"id" => task_id, "pushNotificationConfigId" => config_id}
+    else
+      %{"taskId" => task_id, "configId" => config_id}
+    end
+  end
+
+  defp js_sdk_push_compat?(%A2A.Client.Config{transport_opts: opts}) when is_list(opts) do
+    Keyword.get(opts, :jsonrpc_push_compat, false) == :js_sdk
+  end
+
+  defp js_sdk_push_compat?(_), do: false
 
   defp unique_id do
     System.unique_integer([:positive, :monotonic])

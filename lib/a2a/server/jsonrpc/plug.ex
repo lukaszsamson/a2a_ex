@@ -254,7 +254,7 @@ defmodule A2A.Server.JSONRPC.Plug do
       :push_notification_config_set ->
         with :ok <- ensure_capability(opts.capabilities, :push_notifications),
              :ok <- ensure_handler(opts.executor, :handle_push_notification_config_set, 3),
-             {:ok, task_id} <- require_param(params, "taskId", "Missing taskId"),
+             {:ok, task_id} <- require_push_task_id(params),
              config <- decode_push_config(params),
              {:ok, response} <-
                run_request(opts, fn ->
@@ -270,8 +270,8 @@ defmodule A2A.Server.JSONRPC.Plug do
       :push_notification_config_get ->
         with :ok <- ensure_capability(opts.capabilities, :push_notifications),
              :ok <- ensure_handler(opts.executor, :handle_push_notification_config_get, 3),
-             {:ok, task_id} <- require_param(params, "taskId", "Missing taskId"),
-             {:ok, config_id} <- require_param(params, "configId", "Missing configId"),
+             {:ok, task_id} <- require_push_task_id(params),
+             {:ok, config_id} <- require_push_config_id(params),
              {:ok, response} <-
                run_request(opts, fn ->
                  A2A.Server.ExecutorRunner.call(
@@ -286,7 +286,7 @@ defmodule A2A.Server.JSONRPC.Plug do
       :push_notification_config_list ->
         with :ok <- ensure_capability(opts.capabilities, :push_notifications),
              :ok <- ensure_handler(opts.executor, :handle_push_notification_config_list, 3),
-             {:ok, task_id} <- require_param(params, "taskId", "Missing taskId"),
+             {:ok, task_id} <- require_push_task_id(params),
              {:ok, response} <-
                run_request(opts, fn ->
                  A2A.Server.ExecutorRunner.call(
@@ -301,8 +301,8 @@ defmodule A2A.Server.JSONRPC.Plug do
       :push_notification_config_delete ->
         with :ok <- ensure_capability(opts.capabilities, :push_notifications),
              :ok <- ensure_handler(opts.executor, :handle_push_notification_config_delete, 3),
-             {:ok, task_id} <- require_param(params, "taskId", "Missing taskId"),
-             {:ok, config_id} <- require_param(params, "configId", "Missing configId"),
+             {:ok, task_id} <- require_push_task_id(params),
+             {:ok, config_id} <- require_push_config_id(params),
              :ok <-
                run_request(opts, fn ->
                  A2A.Server.ExecutorRunner.call(
@@ -708,8 +708,26 @@ defmodule A2A.Server.JSONRPC.Plug do
     A2A.Types.PushNotificationConfig.from_map(config)
   end
 
+  defp decode_push_config(%{"pushNotificationConfig" => config}) when is_map(config) do
+    A2A.Types.PushNotificationConfig.from_map(config)
+  end
+
   defp decode_push_config(config) when is_map(config) do
     A2A.Types.PushNotificationConfig.from_map(config)
+  end
+
+  defp require_push_task_id(params) do
+    case Map.get(params, "taskId") || Map.get(params, "id") do
+      nil -> {:invalid_params, "Missing taskId"}
+      task_id -> {:ok, task_id}
+    end
+  end
+
+  defp require_push_config_id(params) do
+    case Map.get(params, "configId") || Map.get(params, "pushNotificationConfigId") do
+      nil -> {:invalid_params, "Missing configId"}
+      config_id -> {:ok, config_id}
+    end
   end
 
   defp encode_push_config(%A2A.Types.PushNotificationConfig{} = config) do
