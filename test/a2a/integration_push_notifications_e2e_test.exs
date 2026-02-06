@@ -270,6 +270,60 @@ defmodule A2A.IntegrationPushNotificationsE2ETest do
     assert get_in(notification, ["task", "status", "state"]) == "completed"
   end
 
+  test "supports push config lifecycle get/list/delete and delete stops new pushes", %{
+    notification_server: notification_server,
+    agent_server: agent_server
+  } do
+    assert {:ok, %A2A.Types.Task{id: task_id, status: %A2A.Types.TaskStatus{state: :input_required}}} =
+             A2A.Client.send_message(agent_server.base_url,
+               message: %A2A.Types.Message{
+                 message_id: "lifecycle-initial",
+                 role: :user,
+                 parts: [%A2A.Types.TextPart{text: "How are you?"}]
+               }
+             )
+
+    token = "token-" <> Integer.to_string(System.unique_integer([:positive]))
+    config_id = "cfg-" <> Integer.to_string(System.unique_integer([:positive]))
+
+    assert {:ok, %A2A.Types.PushNotificationConfig{id: ^config_id, token: ^token}} =
+             A2A.Client.push_notification_config_set(
+               agent_server.base_url,
+               task_id,
+               %A2A.Types.PushNotificationConfig{
+                 id: config_id,
+                 url: notification_server.base_url <> "/notifications",
+                 token: token
+               }
+             )
+
+    assert {:ok, %A2A.Types.PushNotificationConfig{id: ^config_id, token: ^token}} =
+             A2A.Client.push_notification_config_get(agent_server.base_url, task_id, config_id)
+
+    assert {:ok, [%A2A.Types.PushNotificationConfig{id: ^config_id, token: ^token}]} =
+             A2A.Client.push_notification_config_list(agent_server.base_url, task_id)
+
+    assert :ok ==
+             A2A.Client.push_notification_config_delete(agent_server.base_url, task_id, config_id)
+
+    assert {:error, %A2A.Error{type: :task_not_found}} =
+             A2A.Client.push_notification_config_get(agent_server.base_url, task_id, config_id)
+
+    assert {:ok, []} = A2A.Client.push_notification_config_list(agent_server.base_url, task_id)
+
+    assert {:ok, %A2A.Types.Task{id: ^task_id, status: %A2A.Types.TaskStatus{state: :completed}}} =
+             A2A.Client.send_message(agent_server.base_url,
+               message: %A2A.Types.Message{
+                 task_id: task_id,
+                 message_id: "lifecycle-followup-final",
+                 role: :user,
+                 parts: [%A2A.Types.TextPart{text: "Good"}]
+               }
+             )
+
+    assert [] == wait_for_notifications(notification_server.base_url, task_id, 0)
+  end
+
   defp wait_for_notifications(base_url, task_id, expected_count, timeout_ms \\ 3000) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
     url = "#{base_url}/tasks/#{task_id}/notifications"
