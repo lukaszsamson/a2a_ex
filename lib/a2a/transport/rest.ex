@@ -434,37 +434,18 @@ defmodule A2A.Transport.REST do
   defp subscribe_method(%A2A.Client.Config{subscribe_verb: :get}), do: :get
   defp subscribe_method(_config), do: :post
 
-  defp response_header(headers, name) do
+  defp response_header(headers, name) when is_map(headers) do
     downcased = String.downcase(name)
 
-    cond do
-      is_map(headers) ->
-        headers
-        |> Enum.find_value(fn {key, values} ->
-          if String.downcase(to_string(key)) == downcased do
-            case values do
-              [value | _] -> value
-              value when is_binary(value) -> value
-              _ -> nil
-            end
-          end
-        end)
-
-      is_list(headers) ->
-        Enum.find_value(headers, fn
-          {key, value} when is_binary(key) and is_binary(value) ->
-            if String.downcase(key) == downcased, do: value, else: nil
-
-          {key, [value | _]} when is_binary(key) and is_binary(value) ->
-            if String.downcase(key) == downcased, do: value, else: nil
-
-          _ ->
-            nil
-        end)
-
-      true ->
-        nil
-    end
+    Enum.find_value(headers, fn {key, values} ->
+      if String.downcase(to_string(key)) == downcased do
+        case values do
+          [value | _] -> value
+          value when is_binary(value) -> value
+          _ -> nil
+        end
+      end
+    end)
   end
 
   defp merge_headers(existing, updates) do
