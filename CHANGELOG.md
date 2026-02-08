@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-02-08
+
 ### Added
 - Client auth challenge/retry flow: both REST and JSON-RPC transports automatically
   handle 401 responses by invoking a configurable `on_auth_challenge` callback,

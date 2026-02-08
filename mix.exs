@@ -4,7 +4,7 @@ defmodule A2aEx.MixProject do
   def project do
     [
       app: :a2a_ex,
-      version: "0.1.0",
+      version: "0.1.1",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
