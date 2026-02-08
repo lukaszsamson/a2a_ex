@@ -41,6 +41,14 @@ defmodule JSClientE2EExecutor do
   @behaviour A2A.Server.Executor
 
   def handle_send_message(opts, request, _ctx) do
+    if is_nil(request.message) do
+      {:error, A2A.Error.new(:invalid_params, "message is required")}
+    else
+      do_handle_send_message(opts, request)
+    end
+  end
+
+  defp do_handle_send_message(opts, request) do
     store = Map.fetch!(opts, :store)
     text = text_from_parts(request.message.parts)
     task_id = request.message.task_id || "task-" <> Integer.to_string(System.unique_integer([:positive]))
@@ -69,6 +77,14 @@ defmodule JSClientE2EExecutor do
   end
 
   def handle_stream_message(opts, request, _ctx, emit) do
+    if is_nil(request.message) do
+      {:error, A2A.Error.new(:invalid_params, "message is required")}
+    else
+      do_handle_stream_message(opts, request, emit)
+    end
+  end
+
+  defp do_handle_stream_message(opts, request, emit) do
     store = Map.fetch!(opts, :store)
     task_id = request.message.task_id || "task-" <> Integer.to_string(System.unique_integer([:positive]))
     context_id = request.message.context_id || "ctx-" <> Integer.to_string(System.unique_integer([:positive]))
@@ -200,6 +216,41 @@ defmodule JSClientE2EExecutor do
     :ok
   end
 
+  def handle_get_extended_agent_card(_ctx) do
+    {:ok,
+     %A2A.Types.AgentCard{
+       name: "A2A_EX Elixir Server (Extended)",
+       description: "Extended card for authenticated cross-SDK E2E checks",
+       version: "0.1.0",
+       protocol_version: "0.3.0",
+       preferred_transport: "JSONRPC",
+       url: "http://#{host()}:#{port()}/",
+       capabilities: %A2A.Types.AgentCapabilities{
+         streaming: true,
+         push_notifications: true,
+         extended_agent_card: true
+       },
+       default_input_modes: ["text"],
+       default_output_modes: ["text"],
+       skills: [
+         %A2A.Types.AgentSkill{id: "chat", name: "Chat", description: "Echo + stream"},
+         %A2A.Types.AgentSkill{
+           id: "extended-chat",
+           name: "Extended Chat",
+           description: "Authenticated-only extended capability"
+         }
+       ],
+       additional_interfaces: [
+         %A2A.Types.AgentInterface{url: "http://#{host()}:#{port()}/", protocol_binding: "JSONRPC"},
+         %A2A.Types.AgentInterface{
+           url: "http://#{host()}:#{port()}",
+           protocol_binding: "HTTP+JSON"
+         }
+       ],
+       supports_authenticated_extended_card: true
+     }}
+  end
+
   defp maybe_deliver_push_notification(store, task_id, %A2A.Types.Task{} = task) do
     case JSClientE2EStore.get_push(store, task_id) do
       %A2A.Types.PushNotificationConfig{url: url} = cfg when is_binary(url) and url != "" ->
@@ -222,6 +273,9 @@ defmodule JSClientE2EExecutor do
   defp text_from_parts([%A2A.Types.TextPart{text: text} | _]), do: text
   defp text_from_parts([%{text: text} | _]), do: text
   defp text_from_parts(_), do: ""
+
+  defp host, do: System.get_env("A2A_E2E_ELIXIR_SERVER_HOST", "127.0.0.1")
+  defp port, do: String.to_integer(System.get_env("A2A_E2E_ELIXIR_SERVER_PORT", "4311"))
 end
 
 defmodule JSClientE2ERootPlug do
@@ -231,17 +285,25 @@ defmodule JSClientE2ERootPlug do
   @host System.get_env("A2A_E2E_ELIXIR_SERVER_HOST", "127.0.0.1")
   @port String.to_integer(System.get_env("A2A_E2E_ELIXIR_SERVER_PORT", "4311"))
   @auth_token System.get_env("A2A_E2E_AUTH_TOKEN", "retry-token")
+  @required_extension "https://example.com/extensions/e2e"
+  @required_extensions [@required_extension]
 
   @rest_opts A2A.Server.REST.Plug.init(
                executor: {JSClientE2EExecutor, %{store: JSClientE2EStore}},
                version: :v0_3,
                wire_format: :proto_json,
-               capabilities: %{streaming: true, push_notifications: true}
+               capabilities: %{streaming: true, push_notifications: true, extended_agent_card: true},
+               required_extensions: @required_extensions
              )
   @rpc_opts A2A.Server.JSONRPC.Plug.init(
               executor: {JSClientE2EExecutor, %{store: JSClientE2EStore}},
               version: :v0_3,
-              capabilities: %{streaming: true, push_notifications: true}
+              capabilities: %{
+                streaming: true,
+                push_notifications: true,
+                extended_agent_card: true
+              },
+              required_extensions: @required_extensions
             )
 
   plug :route_aux_endpoints
@@ -306,8 +368,10 @@ defmodule JSClientE2ERootPlug do
             ],
             "capabilities" => %{
               "streaming" => true,
-              "pushNotifications" => true
+              "pushNotifications" => true,
+              "extendedAgentCard" => true
             },
+            "supportsAuthenticatedExtendedCard" => true,
             "defaultInputModes" => ["text"],
             "defaultOutputModes" => ["text"],
             "additionalInterfaces" => [

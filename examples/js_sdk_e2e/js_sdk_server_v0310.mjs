@@ -12,6 +12,7 @@ import {
 const port = Number(process.env.A2A_E2E_JS_SERVER_PORT || 4310);
 const host = process.env.A2A_E2E_JS_SERVER_HOST || "127.0.0.1";
 const expectedToken = process.env.A2A_E2E_AUTH_TOKEN || "retry-token";
+const requiredExtension = process.env.A2A_E2E_REQUIRED_EXTENSION || "https://example.com/extensions/e2e";
 
 const authStats = {
   authorized: 0,
@@ -49,6 +50,44 @@ function authGuard(req, res, next) {
   authStats.unauthorized += 1;
   res.set("WWW-Authenticate", 'Bearer realm="a2a", error="invalid_token"');
   return res.status(401).json({ error: "Unauthorized" });
+}
+
+function parseExtensionsHeader(value) {
+  if (!value || typeof value !== "string") return [];
+  return value
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .map((segment) => segment.split(";")[0].trim());
+}
+
+function hasRequiredExtension(req) {
+  const header = req.get("a2a-extensions") ?? req.get("x-a2a-extensions");
+  return parseExtensionsHeader(header).includes(requiredExtension);
+}
+
+function extensionGuard(req, res, next) {
+  if (hasRequiredExtension(req)) {
+    res.set("a2a-extensions", requiredExtension);
+    return next();
+  }
+
+  const missingMessage = `Missing required extensions: ${requiredExtension}`;
+
+  if ((req.baseUrl ?? "").includes("/a2a/jsonrpc")) {
+    return res.status(200).json({
+      jsonrpc: "2.0",
+      id: req.body?.id ?? null,
+      error: { code: -32000, message: missingMessage },
+    });
+  }
+
+  return res.status(400).json({
+    error: {
+      message: missingMessage,
+      type: "UnsupportedOperationError",
+    },
+  });
 }
 
 class E2EExecutor {
@@ -146,8 +185,8 @@ const requestHandler = new DefaultRequestHandler(
 );
 
 app.use(`/${AGENT_CARD_PATH}`, agentCardHandler({ agentCardProvider: requestHandler }));
-app.use("/a2a/jsonrpc", authGuard, jsonRpcHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
-app.use("/a2a/rest", authGuard, restHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
+app.use("/a2a/jsonrpc", authGuard, extensionGuard, jsonRpcHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
+app.use("/a2a/rest", authGuard, extensionGuard, restHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
 
 const server = app.listen(port, host, () => {
   console.log(`E2E_JS_SERVER_READY http://${host}:${port}`);

@@ -2,7 +2,9 @@
 //
 // Coverage in this script:
 // - discovery + transport negotiation from agent card
+// - agent card edge behavior (authenticated extended card + alias methods)
 // - auth challenge/retry (401 + WWW-Authenticate)
+// - error contract interoperability (invalid params/method not found/task not found)
 // - JSON-RPC and REST send_message
 // - task lifecycle parity (get/cancel/resubscribe + list + subscribe)
 // - JSON-RPC and REST sendMessageStream
@@ -28,6 +30,7 @@ const host = "127.0.0.1";
 const port = 4311;
 const baseUrl = `http://${host}:${port}`;
 const authToken = "retry-token";
+const requiredExtension = "https://example.com/extensions/e2e";
 
 async function ensureDeps() {
   await execFile("npm", ["install"], { cwd: jsDir });
@@ -91,11 +94,17 @@ async function runChecks() {
 
   let currentToken = "stale-token";
   const authHandler = {
-    headers: async () => ({ Authorization: `Bearer ${currentToken}` }),
+    headers: async () => ({
+      Authorization: `Bearer ${currentToken}`,
+      "a2a-extensions": requiredExtension,
+    }),
     shouldRetryWithHeaders: async (_req, res) => {
       if (res.status === 401) {
         currentToken = authToken;
-        return { Authorization: `Bearer ${currentToken}` };
+        return {
+          Authorization: `Bearer ${currentToken}`,
+          "a2a-extensions": requiredExtension,
+        };
       }
       return undefined;
     },
@@ -111,6 +120,10 @@ async function runChecks() {
 
   // Negotiation path (card preferred transport).
   const negotiatedClient = await defaultFactory.createFromUrl(baseUrl);
+
+  await runExtensionNegotiationChecks();
+  await runAgentCardEdgeChecks(negotiatedClient, authFetch);
+  await runErrorContractChecks(authFetch);
 
   const negotiatedResponse = await negotiatedClient.sendMessage({
     message: {
@@ -151,13 +164,16 @@ async function runChecks() {
     throw new Error(`Unexpected cancelTask response: ${JSON.stringify(rpcCanceled)}`);
   }
 
-  let rpcResubscribeEvents = 0;
+  const rpcResubscribeEvents = [];
   for await (const event of negotiatedClient.resubscribeTask({ taskId })) {
-    rpcResubscribeEvents += 1;
-    if (rpcResubscribeEvents >= 1) break;
+    rpcResubscribeEvents.push(event);
+    if (rpcResubscribeEvents.length >= 3) break;
   }
-  if (rpcResubscribeEvents < 1) {
+  if (rpcResubscribeEvents.length < 1) {
     throw new Error("JSON-RPC resubscribe produced no events");
+  }
+  if (!rpcResubscribeEvents.some((event) => streamEventTaskId(event) === taskId)) {
+    throw new Error(`JSON-RPC resubscribe did not reference expected task: ${JSON.stringify(rpcResubscribeEvents)}`);
   }
 
   const listRpcRes = await authFetch(`${baseUrl}/`, {
@@ -197,7 +213,7 @@ async function runChecks() {
   }
 
   // JSON-RPC streaming
-  let streamCount = 0;
+  const rpcStreamEvents = [];
   for await (const event of negotiatedClient.sendMessageStream({
     message: {
       kind: "message",
@@ -206,12 +222,13 @@ async function runChecks() {
       parts: [{ kind: "text", text: "stream-jsonrpc" }],
     },
   })) {
-    streamCount += 1;
-    if (streamCount >= 2) break;
+    rpcStreamEvents.push(event);
+    if (hasFinalStatusEvent(rpcStreamEvents) || rpcStreamEvents.length >= 10) break;
   }
-  if (streamCount === 0) {
+  if (rpcStreamEvents.length === 0) {
     throw new Error("JSON-RPC stream produced no events");
   }
+  assertStreamSemantics(rpcStreamEvents, "JSON-RPC stream");
 
   // REST path via official JS SDK REST transport against proto_json compatibility mode.
   currentToken = "stale-token";
@@ -275,6 +292,10 @@ async function runChecks() {
   if (!restSubscribeBody.includes("data:")) {
     throw new Error(`REST subscribe did not produce SSE data: ${restSubscribeBody}`);
   }
+  const restSubscribeEvents = parseSseData(restSubscribeBody);
+  if (!restSubscribeEvents.some((event) => streamEventTaskId(event) === restTaskIdWithMessage)) {
+    throw new Error(`REST subscribe did not reference expected task: ${JSON.stringify(restSubscribeEvents)}`);
+  }
 
   const restStreamRes = await authFetch(`${baseUrl}/v1/message:stream`, {
     method: "POST",
@@ -297,6 +318,8 @@ async function runChecks() {
   if (!restStreamBody.includes("data:")) {
     throw new Error(`REST stream did not produce SSE data: ${restStreamBody}`);
   }
+  const restStreamEvents = parseSseData(restStreamBody);
+  assertStreamSemantics(restStreamEvents, "REST stream");
 
   // REST push lifecycle via raw transport call (SDK REST push path is inconsistent here).
   const restPushConfigId = `cfg-rest-${randomUUID()}`;
@@ -413,6 +436,68 @@ async function runChecks() {
   }
 }
 
+async function runAgentCardEdgeChecks(negotiatedClient, authFetch) {
+  const publicCardRes = await fetch(`${baseUrl}/.well-known/agent-card.json`);
+  if (!publicCardRes.ok) {
+    throw new Error(`Failed to fetch public card: ${publicCardRes.status}`);
+  }
+  const publicCard = await publicCardRes.json();
+  if (publicCard?.supportsAuthenticatedExtendedCard !== true) {
+    throw new Error(`Expected supportsAuthenticatedExtendedCard=true on public card: ${JSON.stringify(publicCard)}`);
+  }
+  const hasJsonRpcInterface = (publicCard?.additionalInterfaces ?? []).some(
+    (iface) => iface?.transport === "JSONRPC",
+  );
+  const hasRestInterface = (publicCard?.additionalInterfaces ?? []).some(
+    (iface) => iface?.transport === "HTTP+JSON",
+  );
+  if (!hasJsonRpcInterface || !hasRestInterface) {
+    throw new Error(`Public card missing expected interfaces: ${JSON.stringify(publicCard?.additionalInterfaces)}`);
+  }
+
+  const extendedCard = await negotiatedClient.getAgentCard();
+  const extendedSkillIds = (extendedCard?.skills ?? []).map((skill) => skill?.id);
+  if (!extendedSkillIds.includes("extended-chat")) {
+    throw new Error(`Expected extended card skill 'extended-chat': ${JSON.stringify(extendedCard)}`);
+  }
+
+  const authExtMethodRes = await authFetch(`${baseUrl}/`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 180,
+      method: "agent/getAuthenticatedExtendedCard",
+      params: {},
+    }),
+  });
+  const authExtMethodBody = await authExtMethodRes.json();
+  if (
+    authExtMethodRes.status !== 200 ||
+    authExtMethodBody?.result?.supportsAuthenticatedExtendedCard !== true
+  ) {
+    throw new Error(`Unexpected getAuthenticatedExtendedCard response: ${JSON.stringify({ status: authExtMethodRes.status, body: authExtMethodBody })}`);
+  }
+
+  const legacyExtMethodRes = await authFetch(`${baseUrl}/`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 181,
+      method: "agent/getExtendedCard",
+      params: {},
+    }),
+  });
+  const legacyExtMethodBody = await legacyExtMethodRes.json();
+  if (
+    legacyExtMethodRes.status !== 200 ||
+    legacyExtMethodBody?.result?.supportsAuthenticatedExtendedCard !== true
+  ) {
+    throw new Error(`Unexpected legacy getExtendedCard response: ${JSON.stringify({ status: legacyExtMethodRes.status, body: legacyExtMethodBody })}`);
+  }
+}
+
 async function waitForPushEvent(taskId, timeoutMs = 8000) {
   const deadline = Date.now() + timeoutMs;
 
@@ -434,6 +519,203 @@ async function waitForPushEvent(taskId, timeoutMs = 8000) {
   }
 
   throw new Error(`Timed out waiting for push delivery for task ${taskId}`);
+}
+
+async function runErrorContractChecks(authFetch) {
+  // JSON-RPC: method not found
+  const unknownMethodRes = await authFetch(`${baseUrl}/`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 301,
+      method: "tasks/notARealMethod",
+      params: {},
+    }),
+  });
+  const unknownMethodBody = await unknownMethodRes.json();
+  if (unknownMethodRes.status !== 200 || unknownMethodBody?.error?.code !== -32601) {
+    throw new Error(`Unexpected JSON-RPC method-not-found response: ${JSON.stringify({ status: unknownMethodRes.status, body: unknownMethodBody })}`);
+  }
+
+  // JSON-RPC: invalid params
+  const invalidParamsRes = await authFetch(`${baseUrl}/`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 302,
+      method: "tasks/get",
+      params: [],
+    }),
+  });
+  const invalidParamsBody = await invalidParamsRes.json();
+  if (invalidParamsRes.status !== 200 || invalidParamsBody?.error?.code !== -32602) {
+    throw new Error(`Unexpected JSON-RPC invalid-params response: ${JSON.stringify({ status: invalidParamsRes.status, body: invalidParamsBody })}`);
+  }
+
+  // JSON-RPC: task not found
+  const taskNotFoundRes = await authFetch(`${baseUrl}/`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 303,
+      method: "tasks/get",
+      params: { id: "task-does-not-exist" },
+    }),
+  });
+  const taskNotFoundBody = await taskNotFoundRes.json();
+  if (taskNotFoundRes.status !== 200 || !taskNotFoundBody?.error) {
+    throw new Error(`Unexpected JSON-RPC task-not-found response: ${JSON.stringify({ status: taskNotFoundRes.status, body: taskNotFoundBody })}`);
+  }
+
+  // REST: invalid params
+  const restInvalidRes = await authFetch(`${baseUrl}/v1/message:send`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (restInvalidRes.status < 400) {
+    throw new Error(`Expected REST invalid-params to be 4xx/5xx, got ${restInvalidRes.status}`);
+  }
+
+  // REST: task not found
+  const restTaskNotFoundRes = await authFetch(`${baseUrl}/v1/tasks/task-does-not-exist`, {
+    method: "GET",
+  });
+  if (restTaskNotFoundRes.status < 400) {
+    throw new Error(`Expected REST task-not-found to be 4xx/5xx, got ${restTaskNotFoundRes.status}`);
+  }
+}
+
+async function runExtensionNegotiationChecks() {
+  // Missing required extension on JSON-RPC should fail.
+  const missingRpc = await fetch(`${baseUrl}/`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 290,
+      method: "message/send",
+      params: {
+        message: {
+          messageId: randomUUID(),
+          role: "user",
+          parts: [{ kind: "text", text: "missing extension jsonrpc" }],
+        },
+      },
+    }),
+  });
+  const missingRpcBody = await missingRpc.json();
+  if (missingRpc.status !== 200 || missingRpcBody?.error?.code !== -32000) {
+    throw new Error(`Unexpected JSON-RPC missing-extension response: ${JSON.stringify({ status: missingRpc.status, body: missingRpcBody })}`);
+  }
+
+  // Missing required extension on REST should fail.
+  const missingRest = await fetch(`${baseUrl}/v1/message:send`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify({
+      message: {
+        messageId: randomUUID(),
+        role: "user",
+        parts: [{ kind: "text", text: "missing extension rest" }],
+      },
+    }),
+  });
+  if (missingRest.status < 400) {
+    throw new Error(`Expected REST missing-extension failure, got ${missingRest.status}`);
+  }
+}
+
+function parseSseData(body) {
+  const events = [];
+  const chunks = body.split("\n\n");
+  for (const chunk of chunks) {
+    const dataLines = chunk
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim())
+      .filter(Boolean);
+    if (dataLines.length === 0) continue;
+    const data = dataLines.join("\n");
+    try {
+      const parsed = JSON.parse(data);
+      events.push(parsed?.result ?? parsed);
+    } catch {
+      // ignore malformed frames
+    }
+  }
+  return events;
+}
+
+function streamEventKind(event) {
+  if (!event || typeof event !== "object") return "unknown";
+  if (event.kind === "task" || (event.id && event.status && !event.taskId)) return "task";
+  if (event.kind === "status-update" || event.statusUpdate || (event.taskId && event.status)) return "status";
+  if (event.kind === "artifact-update" || event.artifactUpdate || (event.taskId && event.artifact)) return "artifact";
+  if (event.kind === "message" || event.message || event.messageId) return "message";
+  if (event.task) return "task";
+  return "unknown";
+}
+
+function streamEventTaskId(event) {
+  if (!event || typeof event !== "object") return undefined;
+  if (event.taskId) return event.taskId;
+  if (event.id && (event.kind === "task" || event.status)) return event.id;
+  if (event.task?.id) return event.task.id;
+  if (event.statusUpdate?.taskId) return event.statusUpdate.taskId;
+  if (event.artifactUpdate?.taskId) return event.artifactUpdate.taskId;
+  if (event.message?.taskId) return event.message.taskId;
+  return undefined;
+}
+
+function isFinalStatusEvent(event) {
+  if (!event || typeof event !== "object") return false;
+  if (event.kind === "status-update" && event.final === true) return true;
+  if (event.statusUpdate?.final === true) return true;
+  if (event.taskId && event.status && event.final === true) return true;
+  return false;
+}
+
+function hasFinalStatusEvent(events) {
+  return events.some((event) => isFinalStatusEvent(event));
+}
+
+function assertStreamSemantics(events, label) {
+  if (!Array.isArray(events) || events.length < 2) {
+    throw new Error(`${label} expected multiple events, got ${JSON.stringify(events)}`);
+  }
+
+  const kinds = events.map((event) => streamEventKind(event));
+  const taskIndex = kinds.indexOf("task");
+  const statusIndexes = kinds.map((kind, idx) => (kind === "status" ? idx : -1)).filter((idx) => idx >= 0);
+  const artifactIndex = kinds.indexOf("artifact");
+
+  if (taskIndex < 0) throw new Error(`${label} missing task event: ${JSON.stringify(events)}`);
+  if (statusIndexes.length === 0) throw new Error(`${label} missing status events: ${JSON.stringify(events)}`);
+  if (artifactIndex < 0) throw new Error(`${label} missing artifact event: ${JSON.stringify(events)}`);
+  if (!hasFinalStatusEvent(events)) throw new Error(`${label} missing final status event: ${JSON.stringify(events)}`);
+
+  const firstStatus = Math.min(...statusIndexes);
+  const lastStatus = Math.max(...statusIndexes);
+
+  if (!(taskIndex < firstStatus)) {
+    throw new Error(`${label} task event should occur before first status event`);
+  }
+  if (!(firstStatus < artifactIndex)) {
+    throw new Error(`${label} working status should occur before artifact event`);
+  }
+  if (!(artifactIndex <= lastStatus)) {
+    throw new Error(`${label} artifact event should occur before or at final status event`);
+  }
 }
 
 async function main() {
