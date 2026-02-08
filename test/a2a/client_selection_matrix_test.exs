@@ -19,8 +19,14 @@ defmodule A2A.ClientSelectionMatrixTest do
     card = %A2A.Types.AgentCard{
       name: "demo",
       supported_interfaces: [
-        %A2A.Types.AgentInterface{protocol_binding: "HTTP+JSON", url: "https://rest-1.example.com"},
-        %A2A.Types.AgentInterface{protocol_binding: "HTTP+JSON", url: "https://rest-2.example.com"}
+        %A2A.Types.AgentInterface{
+          protocol_binding: "HTTP+JSON",
+          url: "https://rest-1.example.com"
+        },
+        %A2A.Types.AgentInterface{
+          protocol_binding: "HTTP+JSON",
+          url: "https://rest-2.example.com"
+        }
       ]
     }
 

@@ -41,7 +41,11 @@ defmodule A2A.ServerRouterMatrixTest do
       "id" => 1,
       "method" => "message/send",
       "params" => %{
-        "message" => %{"messageId" => "msg-1", "role" => "user", "parts" => [%{"text" => "hello"}]}
+        "message" => %{
+          "messageId" => "msg-1",
+          "role" => "user",
+          "parts" => [%{"text" => "hello"}]
+        }
       }
     }
 

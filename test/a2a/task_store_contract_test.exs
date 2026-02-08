@@ -2,7 +2,11 @@ defmodule A2A.TaskStoreContractTest do
   use ExUnit.Case, async: true
 
   defp new_ets_store do
-    name = String.to_atom("task_store_contract_" <> Integer.to_string(System.unique_integer([:positive])))
+    name =
+      String.to_atom(
+        "task_store_contract_" <> Integer.to_string(System.unique_integer([:positive]))
+      )
+
     {:ok, table} = A2A.TaskStore.ETS.init(name: name)
     {A2A.TaskStore.ETS, table}
   end

@@ -28,8 +28,8 @@ defmodule A2A.TelemetryTest do
 
     assert result == :ok
 
-    assert_receive {:telemetry_event, [:a2a, :client, :request, :start], %{system_time: system_time},
-                    %{transport: :rest}}
+    assert_receive {:telemetry_event, [:a2a, :client, :request, :start],
+                    %{system_time: system_time}, %{transport: :rest}}
 
     assert is_integer(system_time)
 
@@ -51,7 +51,8 @@ defmodule A2A.TelemetryTest do
                     %{transport: :jsonrpc}}
 
     assert_receive {:telemetry_event, [:a2a, :client, :request, :exception],
-                    %{duration: duration}, %{transport: :jsonrpc, error: %RuntimeError{message: "boom"}}}
+                    %{duration: duration},
+                    %{transport: :jsonrpc, error: %RuntimeError{message: "boom"}}}
 
     assert is_integer(duration)
     assert duration >= 0

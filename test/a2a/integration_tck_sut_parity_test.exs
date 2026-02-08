@@ -102,7 +102,9 @@ defmodule A2A.IntegrationTCKSUTParityTest do
     events = Enum.to_list(stream)
 
     assert Enum.any?(events, fn
-             %A2A.Types.StreamResponse{task: %A2A.Types.Task{status: %A2A.Types.TaskStatus{state: :submitted}}} ->
+             %A2A.Types.StreamResponse{
+               task: %A2A.Types.Task{status: %A2A.Types.TaskStatus{state: :submitted}}
+             } ->
                true
 
              _ ->
@@ -170,7 +172,9 @@ defmodule A2A.IntegrationTCKSUTParityTest do
   end
 
   defp new_store do
-    name = String.to_atom("tck_sut_store_" <> Integer.to_string(System.unique_integer([:positive])))
+    name =
+      String.to_atom("tck_sut_store_" <> Integer.to_string(System.unique_integer([:positive])))
+
     {:ok, table} = A2A.TaskStore.ETS.init(name: name)
     table
   end

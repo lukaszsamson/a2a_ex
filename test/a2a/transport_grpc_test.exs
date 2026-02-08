@@ -31,7 +31,8 @@ defmodule A2A.TransportGRPCTest do
     ]
 
     Enum.each(checks, fn result ->
-      assert {:error, %A2A.Error{type: :unsupported_operation, message: "gRPC transport not configured"}} =
+      assert {:error,
+              %A2A.Error{type: :unsupported_operation, message: "gRPC transport not configured"}} =
                result
     end)
   end

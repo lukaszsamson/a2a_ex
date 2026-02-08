@@ -78,9 +78,7 @@ defmodule A2A.IntegrationClientServerParityTest do
       A2A.TestHTTPServer.stop(jsonrpc_server.ref)
     end)
 
-    {:ok,
-     rest_base_url: rest_server.base_url,
-     jsonrpc_base_url: jsonrpc_server.base_url}
+    {:ok, rest_base_url: rest_server.base_url, jsonrpc_base_url: jsonrpc_server.base_url}
   end
 
   test "REST and JSON-RPC parity: get_task and cancel_task", %{
@@ -93,7 +91,8 @@ defmodule A2A.IntegrationClientServerParityTest do
     ]
 
     Enum.each(transports, fn {transport, base_url} ->
-      assert {:ok, %A2A.Types.Task{id: "task-1", status: %A2A.Types.TaskStatus{state: :completed}}} =
+      assert {:ok,
+              %A2A.Types.Task{id: "task-1", status: %A2A.Types.TaskStatus{state: :completed}}} =
                A2A.Client.get_task(base_url, "task-1", transport: transport)
 
       assert {:ok, %A2A.Types.Task{id: "task-1", status: %A2A.Types.TaskStatus{state: :canceled}}} =
@@ -111,7 +110,8 @@ defmodule A2A.IntegrationClientServerParityTest do
     ]
 
     Enum.each(transports, fn {transport, base_url} ->
-      assert {:ok, %A2A.Types.PushNotificationConfig{id: "cfg-1", url: "https://callback.example.com"}} =
+      assert {:ok,
+              %A2A.Types.PushNotificationConfig{id: "cfg-1", url: "https://callback.example.com"}} =
                A2A.Client.push_notification_config_set(
                  base_url,
                  "task-1",
@@ -123,7 +123,8 @@ defmodule A2A.IntegrationClientServerParityTest do
                  transport: transport
                )
 
-      assert {:ok, %A2A.Types.PushNotificationConfig{id: "cfg-1", url: "https://example.com/webhook"}} =
+      assert {:ok,
+              %A2A.Types.PushNotificationConfig{id: "cfg-1", url: "https://example.com/webhook"}} =
                A2A.Client.push_notification_config_get(base_url, "task-1", "cfg-1",
                  transport: transport
                )

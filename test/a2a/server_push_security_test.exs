@@ -22,7 +22,10 @@ defmodule A2A.Server.Push.SecurityTest do
   end
 
   test "custom signer callback can attach custom signature header" do
-    headers = Security.add_security_headers([], "{}", signer: fn headers, _body, _opts -> headers ++ [{"x-custom-signature", "signed"}] end)
+    headers =
+      Security.add_security_headers([], "{}",
+        signer: fn headers, _body, _opts -> headers ++ [{"x-custom-signature", "signed"}] end
+      )
 
     assert {"x-custom-signature", "signed"} in headers
   end

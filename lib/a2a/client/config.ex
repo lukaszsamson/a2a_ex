@@ -73,7 +73,8 @@ defmodule A2A.Client.Config do
     headers
   end
 
-  @spec auth_challenge_headers(t(), String.t() | nil) :: {:ok, list({String.t(), String.t()})} | :skip
+  @spec auth_challenge_headers(t(), String.t() | nil) ::
+          {:ok, list({String.t(), String.t()})} | :skip
   def auth_challenge_headers(%__MODULE__{auth: {module, opts}}, challenge)
       when is_atom(module) do
     if function_exported?(module, :on_auth_challenge, 2) do

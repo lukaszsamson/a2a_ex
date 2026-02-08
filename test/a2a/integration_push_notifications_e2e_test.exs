@@ -67,8 +67,13 @@ defmodule A2A.IntegrationPushNotificationsE2ETest do
     def handle_send_message(request, ctx), do: handle_send_message(%{}, request, ctx)
 
     def handle_send_message(opts, request, _ctx) do
-      task_id = request.message.task_id || "task-" <> Integer.to_string(System.unique_integer([:positive]))
-      context_id = request.message.context_id || "ctx-" <> Integer.to_string(System.unique_integer([:positive]))
+      task_id =
+        request.message.task_id ||
+          "task-" <> Integer.to_string(System.unique_integer([:positive]))
+
+      context_id =
+        request.message.context_id ||
+          "ctx-" <> Integer.to_string(System.unique_integer([:positive]))
 
       text = extract_text(request.message)
 
@@ -104,7 +109,12 @@ defmodule A2A.IntegrationPushNotificationsE2ETest do
     def handle_cancel_task(task_id, ctx), do: handle_cancel_task(%{}, task_id, ctx)
 
     def handle_cancel_task(_opts, task_id, _ctx) do
-      {:ok, %A2A.Types.Task{id: task_id, context_id: "ctx-1", status: %A2A.Types.TaskStatus{state: :canceled}}}
+      {:ok,
+       %A2A.Types.Task{
+         id: task_id,
+         context_id: "ctx-1",
+         status: %A2A.Types.TaskStatus{state: :canceled}
+       }}
     end
 
     def handle_push_notification_config_set(opts, task_id, config, _ctx) do
@@ -133,7 +143,11 @@ defmodule A2A.IntegrationPushNotificationsE2ETest do
 
     defp maybe_store_request_config(_opts, _task_id, nil), do: :ok
 
-    defp maybe_store_request_config(opts, task_id, %A2A.Types.SendMessageConfiguration{} = configuration) do
+    defp maybe_store_request_config(
+           opts,
+           task_id,
+           %A2A.Types.SendMessageConfiguration{} = configuration
+         ) do
       case configuration.push_notification_config do
         %A2A.Types.PushNotificationConfig{} = config -> put_config(opts, task_id, config)
         _ -> :ok
@@ -230,7 +244,8 @@ defmodule A2A.IntegrationPushNotificationsE2ETest do
     notification_server: notification_server,
     agent_server: agent_server
   } do
-    assert {:ok, %A2A.Types.Task{id: task_id, status: %A2A.Types.TaskStatus{state: :input_required}}} =
+    assert {:ok,
+            %A2A.Types.Task{id: task_id, status: %A2A.Types.TaskStatus{state: :input_required}}} =
              A2A.Client.send_message(agent_server.base_url,
                message: %A2A.Types.Message{
                  message_id: "how-are-you",
@@ -274,7 +289,8 @@ defmodule A2A.IntegrationPushNotificationsE2ETest do
     notification_server: notification_server,
     agent_server: agent_server
   } do
-    assert {:ok, %A2A.Types.Task{id: task_id, status: %A2A.Types.TaskStatus{state: :input_required}}} =
+    assert {:ok,
+            %A2A.Types.Task{id: task_id, status: %A2A.Types.TaskStatus{state: :input_required}}} =
              A2A.Client.send_message(agent_server.base_url,
                message: %A2A.Types.Message{
                  message_id: "lifecycle-initial",
@@ -340,7 +356,9 @@ defmodule A2A.IntegrationPushNotificationsE2ETest do
         notifications
 
       System.monotonic_time(:millisecond) >= deadline ->
-        flunk("Notification retrieval timed out: got #{length(notifications)}, expected #{expected_count}")
+        flunk(
+          "Notification retrieval timed out: got #{length(notifications)}, expected #{expected_count}"
+        )
 
       true ->
         Process.sleep(100)
