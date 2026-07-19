@@ -13,12 +13,63 @@ Elixir client and server library for the [Agent2Agent (A2A) protocol](https://a2
 
 ## Protocol compatibility
 
-- [v0.3.0](https://a2a-protocol.org/v0.3.0/specification/) and [latest Release Candidate v1.0](https://a2a-protocol.org/latest/specification/)-compatible mode.
-- REST + SSE and JSON-RPC + SSE.
+- A stable `:v1_0` mode implementing the released A2A v1.0 ProtoJSON contract over HTTP+JSON and JSON-RPC, including SSE.
+- A separate `:v0_3` compatibility adapter for legacy v0.3 deployments.
+- `:latest` remains an accepted input alias for backwards compatibility, but is immediately normalized to `:v1_0`; it is never stored, emitted, or tested as a conformance identity.
+- gRPC is not currently implemented and is not advertised as a supported v1.0 binding.
 
-### REST wire format compatibility
+### A2A v1.0
 
-By default, REST uses spec-compliant JSON wire format (`wire_format: :spec_json`), e.g.
+Select v1.0 explicitly on both sides. The v1 codec always emits the normative
+ProtoJSON shape; `wire_format` compatibility settings do not affect it.
+
+```elixir
+config =
+  A2A.Client.Config.new("https://example.com",
+    transport: A2A.Transport.REST,
+    version: :v1_0
+  )
+
+{:ok, result} =
+  A2A.Client.send_message(config,
+    message: %A2A.Types.Message{
+      message_id: "message-1",
+      role: :user,
+      parts: [%A2A.Types.Part{text: "Hello"}]
+    }
+  )
+```
+
+```elixir
+plug A2A.Server.REST.Plug,
+  executor: MyApp.A2AExecutor,
+  version: :v1_0
+```
+
+V1 HTTP+JSON requests and responses use `application/a2a+json`. JSON-RPC
+continues to use its required `application/json` media type.
+
+Public v1 Agent Cards include a content-derived `ETag` and
+`Cache-Control: public, max-age=300`; matching `If-None-Match` requests receive
+`304 Not Modified`. The policy is configurable when installing the card plug:
+
+```elixir
+plug A2A.Server.AgentCardPlug,
+  card: MyApp.AgentCard.build(),
+  version: :v1_0,
+  cache_control: "public, max-age=900"
+```
+
+Use `cache_control: false, etag: false` to return `Cache-Control: no-store`
+without an ETag, which is useful for per-request dynamic cards.
+
+The client negotiates only interfaces whose `protocolVersion` matches the
+requested stable identity (`1.0` for `:v1_0`, `0.3` for `:v0_3`) and carries
+the selected interface tenant into requests.
+
+### v0.3 wire format compatibility
+
+The legacy v0.3 adapter uses spec-compliant JSON by default (`wire_format: :spec_json`), e.g.
 `role: "user" | "agent"` and `parts`.
 
 For interoperability with SDKs that use protobuf-style REST JSON (`ROLE_USER` / `content`),
@@ -52,9 +103,14 @@ plug A2A.Server.REST.Plug,
   wire_format: :proto_json
 ```
 
-Use `:proto_json` only as an interoperability workaround; keep `:spec_json` for standards-compliant v0.3 REST deployments.
+Use `:proto_json` only as a v0.3 interoperability workaround; keep `:spec_json`
+for standards-compliant v0.3 deployments. This setting is intentionally ignored
+by the v1.0 adapter.
 
 ## Installation
+
+Requires Elixir 1.16 or later and Erlang/OTP 26 or later. CI covers the minimum
+Elixir 1.16/OTP 26 combination and the current Elixir 1.20/OTP 29 combination.
 
 Add `a2a_ex` to your dependencies:
 
@@ -240,6 +296,17 @@ mix docs
 mix format --check-formatted
 mix test
 mix dialyzer
+```
+
+The v1.0 interoperability checks pin their external dependencies for
+reproducibility. CI runs both commands on every push and pull request:
+
+```bash
+# Official Python SDK (a2a-sdk 1.1.1), HTTP+JSON and JSON-RPC
+scripts/run_v1_python_sdk.sh
+
+# Official A2A TCK at the commit pinned by the script
+A2A_TCK_DIR=/path/to/a2a-tck scripts/run_v1_tck.sh --level must
 ```
 
 ## License

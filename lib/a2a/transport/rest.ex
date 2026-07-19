@@ -21,21 +21,15 @@ defmodule A2A.Transport.REST do
   @spec send_message(A2A.Client.Config.t(), A2A.Types.SendMessageRequest.t()) ::
           {:ok, A2A.Types.Task.t() | A2A.Types.Message.t()} | {:error, A2A.Error.t()}
   def send_message(%A2A.Client.Config{} = config, %A2A.Types.SendMessageRequest{} = request) do
-    url = build_url(config.base_url, base_path(config) <> "/message:send")
+    url = build_url(config.base_url, request_base_path(config) <> "/message:send")
 
     body =
-      A2A.Types.SendMessageRequest.to_map(request,
-        version: config.version,
-        wire_format: config.wire_format
-      )
+      A2A.Types.SendMessageRequest.to_map(request, type_opts(config))
 
     with {:ok, resp} <- request(:post, url, config, body),
          {:ok, body} <- decode_json_response(resp),
          response <-
-           A2A.Types.SendMessageResponse.from_map(body,
-             version: config.version,
-             wire_format: config.wire_format
-           ) do
+           A2A.Types.SendMessageResponse.from_map(body, type_opts(config)) do
       {:ok, response.task || response.message}
     else
       {:error, error} -> {:error, error}
@@ -45,13 +39,10 @@ defmodule A2A.Transport.REST do
   @spec stream_message(A2A.Client.Config.t(), A2A.Types.SendMessageRequest.t()) ::
           {:ok, A2A.Client.Stream.t()} | {:error, A2A.Error.t()}
   def stream_message(%A2A.Client.Config{} = config, %A2A.Types.SendMessageRequest{} = request) do
-    url = build_url(config.base_url, base_path(config) <> "/message:stream")
+    url = build_url(config.base_url, request_base_path(config) <> "/message:stream")
 
     body =
-      A2A.Types.SendMessageRequest.to_map(request,
-        version: config.version,
-        wire_format: config.wire_format
-      )
+      A2A.Types.SendMessageRequest.to_map(request, type_opts(config))
 
     stream_request(config, :post, url, body)
   end
@@ -60,12 +51,16 @@ defmodule A2A.Transport.REST do
           {:ok, A2A.Types.Task.t()} | {:error, A2A.Error.t()}
   def get_task(%A2A.Client.Config{} = config, task_id, opts) do
     query = build_query(opts)
-    url = build_url(config.base_url, base_path(config) <> "/tasks/#{task_id}" <> query)
+
+    url =
+      build_url(
+        config.base_url,
+        request_base_path(config) <> "/tasks/#{path_segment(task_id)}" <> query
+      )
 
     with {:ok, resp} <- request(:get, url, config, nil),
          {:ok, body} <- decode_json_response(resp) do
-      {:ok,
-       A2A.Types.Task.from_map(body, version: config.version, wire_format: config.wire_format)}
+      {:ok, A2A.Types.Task.from_map(body, type_opts(config))}
     else
       {:error, error} -> {:error, error}
     end
@@ -74,16 +69,12 @@ defmodule A2A.Transport.REST do
   @spec list_tasks(A2A.Client.Config.t(), A2A.Types.ListTasksRequest.t()) ::
           {:ok, A2A.Types.ListTasksResponse.t()} | {:error, A2A.Error.t()}
   def list_tasks(%A2A.Client.Config{} = config, %A2A.Types.ListTasksRequest{} = request) do
-    query = A2A.Types.ListTasksRequest.to_map(request, version: config.version)
-    url = build_url(config.base_url, base_path(config) <> "/tasks" <> encode_query(query))
+    query = A2A.Types.ListTasksRequest.to_map(request, type_opts(config)) |> Map.delete("tenant")
+    url = build_url(config.base_url, request_base_path(config) <> "/tasks" <> encode_query(query))
 
     with {:ok, resp} <- request(:get, url, config, nil),
          {:ok, body} <- decode_json_response(resp) do
-      {:ok,
-       A2A.Types.ListTasksResponse.from_map(body,
-         version: config.version,
-         wire_format: config.wire_format
-       )}
+      {:ok, A2A.Types.ListTasksResponse.from_map(body, type_opts(config))}
     else
       {:error, error} -> {:error, error}
     end
@@ -92,12 +83,17 @@ defmodule A2A.Transport.REST do
   @spec cancel_task(A2A.Client.Config.t(), String.t()) ::
           {:ok, A2A.Types.Task.t()} | {:error, A2A.Error.t()}
   def cancel_task(%A2A.Client.Config{} = config, task_id) do
-    url = build_url(config.base_url, base_path(config) <> "/tasks/#{task_id}:cancel")
+    url =
+      build_url(
+        config.base_url,
+        request_base_path(config) <> "/tasks/#{path_segment(task_id)}:cancel"
+      )
 
-    with {:ok, resp} <- request(:post, url, config, %{}),
+    body = if config.cancel_metadata, do: %{"metadata" => config.cancel_metadata}, else: %{}
+
+    with {:ok, resp} <- request(:post, url, config, body),
          {:ok, body} <- decode_json_response(resp) do
-      {:ok,
-       A2A.Types.Task.from_map(body, version: config.version, wire_format: config.wire_format)}
+      {:ok, A2A.Types.Task.from_map(body, type_opts(config))}
     else
       {:error, error} -> {:error, error}
     end
@@ -106,7 +102,12 @@ defmodule A2A.Transport.REST do
   @spec resubscribe(A2A.Client.Config.t(), String.t(), map()) ::
           {:ok, A2A.Client.Stream.t()} | {:error, A2A.Error.t()}
   def resubscribe(%A2A.Client.Config{} = config, task_id, resume) do
-    url = build_url(config.base_url, base_path(config) <> "/tasks/#{task_id}:subscribe")
+    url =
+      build_url(
+        config.base_url,
+        request_base_path(config) <> "/tasks/#{path_segment(task_id)}:subscribe"
+      )
+
     body = if subscribe_method(config) == :get, do: nil, else: %{resume: resume}
 
     headers = resume_headers(resume)
@@ -116,7 +117,11 @@ defmodule A2A.Transport.REST do
   @spec subscribe(A2A.Client.Config.t(), String.t()) ::
           {:ok, A2A.Client.Stream.t()} | {:error, A2A.Error.t()}
   def subscribe(%A2A.Client.Config{} = config, task_id) do
-    url = build_url(config.base_url, base_path(config) <> "/tasks/#{task_id}:subscribe")
+    url =
+      build_url(
+        config.base_url,
+        request_base_path(config) <> "/tasks/#{path_segment(task_id)}:subscribe"
+      )
 
     body = if subscribe_method(config) == :get, do: nil, else: %{}
 
@@ -130,7 +135,17 @@ defmodule A2A.Transport.REST do
         ) :: {:ok, A2A.Types.PushNotificationConfig.t()} | {:error, A2A.Error.t()}
   def push_notification_config_set(%A2A.Client.Config{} = config, task_id, request) do
     url =
-      build_url(config.base_url, base_path(config) <> "/tasks/#{task_id}/pushNotificationConfigs")
+      build_url(
+        config.base_url,
+        request_base_path(config) <> "/tasks/#{path_segment(task_id)}/pushNotificationConfigs"
+      )
+
+    request =
+      if config.version == :v1_0 do
+        %{request | task_id: request.task_id || task_id, tenant: request.tenant || config.tenant}
+      else
+        request
+      end
 
     body = encode_push_config_set_request(request, config.version)
 
@@ -148,7 +163,8 @@ defmodule A2A.Transport.REST do
     url =
       build_url(
         config.base_url,
-        base_path(config) <> "/tasks/#{task_id}/pushNotificationConfigs/#{config_id}"
+        request_base_path(config) <>
+          "/tasks/#{path_segment(task_id)}/pushNotificationConfigs/#{path_segment(config_id)}"
       )
 
     with {:ok, resp} <- request(:get, url, config, nil),
@@ -165,12 +181,17 @@ defmodule A2A.Transport.REST do
     url =
       build_url(
         config.base_url,
-        base_path(config) <> "/tasks/#{task_id}/pushNotificationConfigs" <> encode_query(query)
+        request_base_path(config) <>
+          "/tasks/#{path_segment(task_id)}/pushNotificationConfigs" <> encode_query(query)
       )
 
     with {:ok, resp} <- request(:get, url, config, nil),
          {:ok, body} <- decode_json_response(resp) do
-      {:ok, decode_push_config_list(body)}
+      if config.version == :v1_0 do
+        {:ok, A2A.Types.ListTaskPushNotificationConfigsResponse.from_map(body)}
+      else
+        {:ok, decode_push_config_list(body)}
+      end
     else
       {:error, error} -> {:error, error}
     end
@@ -182,7 +203,8 @@ defmodule A2A.Transport.REST do
     url =
       build_url(
         config.base_url,
-        base_path(config) <> "/tasks/#{task_id}/pushNotificationConfigs/#{config_id}"
+        request_base_path(config) <>
+          "/tasks/#{path_segment(task_id)}/pushNotificationConfigs/#{path_segment(config_id)}"
       )
 
     case request(:delete, url, config, nil) do
@@ -196,11 +218,11 @@ defmodule A2A.Transport.REST do
   def get_extended_agent_card(%A2A.Client.Config{} = config) do
     path =
       case config.version do
-        :latest -> "/extendedAgentCard"
+        :v1_0 -> "/extendedAgentCard"
         _ -> "/card"
       end
 
-    url = build_url(config.base_url, base_path(config) <> path)
+    url = build_url(config.base_url, request_base_path(config) <> path)
 
     with {:ok, resp} <- request(:get, url, config, nil),
          {:ok, body} <- decode_json_response(resp) do
@@ -212,7 +234,13 @@ defmodule A2A.Transport.REST do
 
   defp request(method, url, %A2A.Client.Config{} = config, body) do
     payload = if body == nil, do: nil, else: Jason.encode!(body)
-    headers = A2A.Client.Config.request_headers(config) |> ensure_content_type(payload)
+
+    headers =
+      config
+      |> A2A.Client.Config.request_headers()
+      |> ensure_content_type(payload, config)
+      |> ensure_json_accept(config)
+
     metadata = %{transport: :rest, method: method, url: url, wire_format: config.wire_format}
 
     A2A.Telemetry.span([:a2a, :client, :request], metadata, fn ->
@@ -256,15 +284,26 @@ defmodule A2A.Transport.REST do
     end
   end
 
-  defp ensure_content_type(headers, nil), do: headers
+  defp ensure_content_type(headers, nil, _config), do: headers
 
-  defp ensure_content_type(headers, _payload) do
+  defp ensure_content_type(headers, _payload, config) do
     if Enum.any?(headers, fn {key, _} -> String.downcase(key) == "content-type" end) do
       headers
     else
-      headers ++ [{"content-type", "application/json"}]
+      headers ++ [{"content-type", json_media_type(config)}]
     end
   end
+
+  defp ensure_json_accept(headers, config) do
+    if Enum.any?(headers, fn {key, _} -> String.downcase(key) == "accept" end) do
+      headers
+    else
+      headers ++ [{"accept", json_media_type(config)}]
+    end
+  end
+
+  defp json_media_type(%A2A.Client.Config{version: :v1_0}), do: "application/a2a+json"
+  defp json_media_type(_config), do: "application/json"
 
   defp decode_json(body) when is_map(body), do: {:ok, body}
   defp decode_json(body) when is_list(body), do: {:ok, body}
@@ -287,7 +326,7 @@ defmodule A2A.Transport.REST do
 
   defp stream_request(%A2A.Client.Config{} = config, method, url, body, extra_headers \\ []) do
     payload = if body == nil, do: nil, else: Jason.encode!(body)
-    headers = A2A.Client.Config.request_headers(config) |> ensure_content_type(payload)
+    headers = A2A.Client.Config.request_headers(config) |> ensure_content_type(payload, config)
     headers = headers ++ extra_headers
     headers = ensure_accept(headers)
     metadata = %{transport: :rest, method: method, url: url, wire_format: config.wire_format}
@@ -375,9 +414,8 @@ defmodule A2A.Transport.REST do
 
   defp decode_push_config_list(_), do: []
 
-  defp encode_push_config_set_request(request, :latest) do
-    # latest proto-style request uses "config" wrapper
-    %{"config" => A2A.Types.PushNotificationConfig.to_map(request)}
+  defp encode_push_config_set_request(request, :v1_0) do
+    A2A.Types.PushNotificationConfig.to_map(request, version: :v1_0)
   end
 
   defp encode_push_config_set_request(request, _) do
@@ -410,10 +448,7 @@ defmodule A2A.Transport.REST do
   end
 
   defp decode_stream_payload(payload, config) when is_map(payload) do
-    A2A.Types.StreamResponse.from_map(payload,
-      version: config.version,
-      wire_format: config.wire_format
-    )
+    A2A.Types.StreamResponse.from_map(payload, type_opts(config))
   end
 
   defp attach_raw(%A2A.Error{} = error, raw), do: %{error | raw: raw}
@@ -427,9 +462,30 @@ defmodule A2A.Transport.REST do
 
   defp base_path(%A2A.Client.Config{rest_base_path: base_path}), do: base_path
 
-  defp build_url(base, path) do
-    URI.merge(base, path) |> to_string()
+  defp request_base_path(%A2A.Client.Config{version: :v1_0, tenant: tenant} = config)
+       when is_binary(tenant) and tenant != "" do
+    base_path(config) <> "/" <> URI.encode(tenant, &URI.char_unreserved?/1)
   end
+
+  defp request_base_path(config), do: base_path(config)
+
+  defp type_opts(config), do: A2A.Protocol.type_opts(config.version, config.wire_format)
+
+  defp build_url(base, path) do
+    if String.starts_with?(path, "/.well-known/") do
+      URI.merge(base, path) |> to_string()
+    else
+      uri = URI.parse(base)
+      base_path = String.trim_trailing(uri.path || "", "/")
+      operation_path = String.trim_leading(path, "/")
+      joined = base_path <> if(operation_path == "", do: "", else: "/" <> operation_path)
+
+      %{uri | path: if(joined == "", do: "/", else: joined), query: nil, fragment: nil}
+      |> to_string()
+    end
+  end
+
+  defp path_segment(value), do: URI.encode(to_string(value), &URI.char_unreserved?/1)
 
   defp subscribe_method(%A2A.Client.Config{subscribe_verb: :get}), do: :get
   defp subscribe_method(_config), do: :post

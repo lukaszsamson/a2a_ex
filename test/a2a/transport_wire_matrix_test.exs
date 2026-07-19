@@ -67,14 +67,14 @@ defmodule A2A.TransportWireMatrixTest do
     }
   end
 
-  test "REST latest + spec_json keeps spec message fields" do
+  test "REST v1.0 ignores compatibility wire format and emits ProtoJSON" do
     server = A2A.TestHTTPServer.start(RESTWireCapturePlug, plug_opts: [parent: self()])
     on_exit(fn -> A2A.TestHTTPServer.stop(server.ref) end)
 
     config =
       A2A.Client.Config.new(server.base_url,
         transport: A2A.Transport.REST,
-        version: :latest,
+        version: :v1_0,
         wire_format: :spec_json
       )
 
@@ -82,19 +82,19 @@ defmodule A2A.TransportWireMatrixTest do
              A2A.Transport.REST.send_message(config, request())
 
     assert_received {:rest_wire_payload, payload}
-    assert payload["message"]["role"] == "user"
-    assert payload["message"]["parts"] == [%{"kind" => "text", "text" => "hello"}]
+    assert payload["message"]["role"] == "ROLE_USER"
+    assert payload["message"]["parts"] == [%{"text" => "hello"}]
     refute Map.has_key?(payload["message"], "content")
   end
 
-  test "REST latest + proto_json emits proto-style message fields" do
+  test "REST v1.0 cannot be changed by proto_json compatibility option" do
     server = A2A.TestHTTPServer.start(RESTWireCapturePlug, plug_opts: [parent: self()])
     on_exit(fn -> A2A.TestHTTPServer.stop(server.ref) end)
 
     config =
       A2A.Client.Config.new(server.base_url,
         transport: A2A.Transport.REST,
-        version: :latest,
+        version: :v1_0,
         wire_format: :proto_json
       )
 
@@ -103,18 +103,18 @@ defmodule A2A.TransportWireMatrixTest do
 
     assert_received {:rest_wire_payload, payload}
     assert payload["message"]["role"] == "ROLE_USER"
-    assert payload["message"]["content"] == [%{"text" => "hello"}]
-    refute Map.has_key?(payload["message"], "parts")
+    assert payload["message"]["parts"] == [%{"text" => "hello"}]
+    refute Map.has_key?(payload["message"], "content")
   end
 
-  test "JSON-RPC latest ignores wire_format override and still emits proto-style params" do
+  test "JSON-RPC v1.0 ignores wire_format override and emits normative params" do
     server = A2A.TestHTTPServer.start(JSONRPCWireCapturePlug, plug_opts: [parent: self()])
     on_exit(fn -> A2A.TestHTTPServer.stop(server.ref) end)
 
     config =
       A2A.Client.Config.new(server.base_url,
         transport: A2A.Transport.JSONRPC,
-        version: :latest,
+        version: :v1_0,
         wire_format: :spec_json
       )
 
@@ -124,7 +124,7 @@ defmodule A2A.TransportWireMatrixTest do
     assert_received {:jsonrpc_wire_payload, payload}
     assert payload["method"] == "SendMessage"
     assert payload["params"]["message"]["role"] == "ROLE_USER"
-    assert payload["params"]["message"]["content"] == [%{"text" => "hello"}]
-    refute Map.has_key?(payload["params"]["message"], "parts")
+    assert payload["params"]["message"]["parts"] == [%{"text" => "hello"}]
+    refute Map.has_key?(payload["params"]["message"], "content")
   end
 end

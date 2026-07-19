@@ -1,0 +1,22 @@
+{
+  "tasks": [
+    {
+      "id": "task-schema-1",
+      "contextId": "ctx-schema-1",
+      "status": {
+        "state": "TASK_STATE_CANCELED",
+        "timestamp": "2026-03-12T12:00:00Z"
+      },
+      "history": [
+        {
+          "messageId": "msg-schema-1",
+          "role": "ROLE_USER",
+          "parts": [{"text": "hello"}]
+        }
+      ]
+    }
+  ],
+  "nextPageToken": "",
+  "pageSize": 50,
+  "totalSize": 1
+}

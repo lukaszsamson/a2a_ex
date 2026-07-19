@@ -17,7 +17,7 @@ defmodule A2A.ClientConfigTest do
     assert config.transport == A2A.Transport.REST
   end
 
-  test "selects supported interface for latest" do
+  test "selects the first supported interface when no version is requested" do
     card = %A2A.Types.AgentCard{
       name: "demo",
       supported_interfaces: [
@@ -111,11 +111,12 @@ defmodule A2A.ClientConfigTest do
     assert {"authorization", "Bearer module"} in headers
   end
 
-  test "adds version header for latest" do
-    config = A2A.Client.Config.new("https://example.com", version: :latest)
+  test "adds the stable v1.0 version header" do
+    config = A2A.Client.Config.new("https://example.com", version: :v1_0)
     headers = A2A.Client.Config.request_headers(config)
 
-    assert {"a2a-version", "0.3"} in headers
+    assert config.version == :v1_0
+    assert {"a2a-version", "1.0"} in headers
   end
 
   test "supports auth function" do

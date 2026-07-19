@@ -63,6 +63,8 @@ defmodule A2A.Client do
         keyword when is_list(keyword) -> A2A.Types.ListTasksRequest.from_map(Map.new(keyword))
       end
 
+    request = if request.tenant, do: request, else: %{request | tenant: config.tenant}
+
     config.transport.list_tasks(config, request)
   end
 
@@ -145,11 +147,31 @@ defmodule A2A.Client do
 
   def select_interface(%A2A.Types.AgentCard{} = card, opts \\ []) do
     binding = interface_binding_override(opts)
+    requested_version = Keyword.get(opts, :version)
 
-    if binding do
-      interface_for_binding(card, binding) || default_interface(card)
-    else
-      default_interface(card)
+    interfaces =
+      List.wrap(card.supported_interfaces) ++ List.wrap(card.additional_interfaces)
+
+    interfaces =
+      if requested_version do
+        identity = A2A.Types.normalize_version(requested_version)
+        Enum.filter(interfaces, &interface_version?(&1, identity))
+      else
+        Enum.filter(interfaces, &supported_interface_version?/1)
+      end
+
+    case {binding, interfaces} do
+      {binding, interfaces} when is_binary(binding) ->
+        Enum.find(interfaces, &interface_binding?(&1, binding))
+
+      {nil, [interface | _]} ->
+        interface
+
+      {nil, []} when is_nil(requested_version) ->
+        if List.wrap(card.supported_interfaces) == [], do: default_interface(card), else: nil
+
+      _ ->
+        nil
     end
   end
 
@@ -169,17 +191,45 @@ defmodule A2A.Client do
   defp binding_for_transport(A2A.Transport.GRPC), do: "GRPC"
   defp binding_for_transport(_), do: nil
 
-  defp interface_for_binding(%A2A.Types.AgentCard{} = card, binding) do
-    interfaces = List.wrap(card.supported_interfaces) ++ List.wrap(card.additional_interfaces)
-
-    Enum.find(interfaces, fn interface ->
-      Map.get(interface, :protocol_binding) == binding or
-        Map.get(interface, "protocolBinding") == binding
-    end) ||
-      if card.preferred_transport == binding and is_binary(card.url) do
-        %A2A.Types.AgentInterface{protocol_binding: binding, url: card.url}
-      end
+  defp interface_binding?(interface, binding) do
+    Map.get(interface, :protocol_binding) == binding or
+      Map.get(interface, "protocolBinding") == binding
   end
+
+  defp interface_version?(interface, identity) do
+    version = Map.get(interface, :protocol_version) || Map.get(interface, "protocolVersion")
+
+    case {identity, parse_protocol_version(version)} do
+      {:v1_0, {1, 0}} -> true
+      {:v0_3, {0, 3}} -> true
+      _ -> false
+    end
+  end
+
+  defp supported_interface_version?(interface) do
+    version = Map.get(interface, :protocol_version) || Map.get(interface, "protocolVersion")
+
+    is_nil(version) or
+      interface_version?(interface, :v1_0) or
+      interface_version?(interface, :v0_3)
+  end
+
+  defp parse_protocol_version(version) when is_binary(version) do
+    case String.split(version, ".") do
+      [major, minor | _] ->
+        with {major, ""} <- Integer.parse(major),
+             {minor, ""} <- Integer.parse(minor) do
+          {major, minor}
+        else
+          _ -> :error
+        end
+
+      _ ->
+        :error
+    end
+  end
+
+  defp parse_protocol_version(_), do: :error
 
   defp default_interface(%A2A.Types.AgentCard{} = card) do
     cond do
@@ -215,6 +265,7 @@ defmodule A2A.Client do
           build_send_message_from_keyword(keyword, config)
       end
 
+    request = if request.tenant, do: request, else: %{request | tenant: config.tenant}
     {config, request}
   end
 
@@ -225,7 +276,7 @@ defmodule A2A.Client do
       message: message,
       configuration: Keyword.get(keyword, :configuration),
       metadata: Keyword.get(keyword, :metadata),
-      tenant: Keyword.get(keyword, :tenant)
+      tenant: Keyword.get(keyword, :tenant, config.tenant)
     }
 
     A2A.Types.SendMessageRequest.from_map(

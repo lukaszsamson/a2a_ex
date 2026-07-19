@@ -3,12 +3,23 @@ defmodule A2A.Types do
   Shared helpers for A2A type encoding/decoding.
   """
 
-  @type version :: :v0_3 | :latest
+  @type version :: :v0_3 | :v1_0 | :latest
   @type wire_format :: :spec_json | :proto_json
+
+  @doc """
+  Normalizes protocol aliases to a stable conformance identity.
+
+  `:latest` is retained as a backwards-compatible input alias, but is never
+  stored or emitted as a protocol identity.
+  """
+  @spec normalize_version(version()) :: :v0_3 | :v1_0
+  def normalize_version(:latest), do: :v1_0
+  def normalize_version(:v1_0), do: :v1_0
+  def normalize_version(:v0_3), do: :v0_3
 
   @spec version_from_opts(keyword()) :: version()
   def version_from_opts(opts) do
-    Keyword.get(opts, :version, :v0_3)
+    opts |> Keyword.get(:version, :v0_3) |> normalize_version()
   end
 
   @spec wire_format_from_opts(keyword()) :: wire_format()
@@ -21,10 +32,7 @@ defmodule A2A.Types do
         :proto_json
 
       _ ->
-        case version_from_opts(opts) do
-          :latest -> :proto_json
-          _ -> :spec_json
-        end
+        :spec_json
     end
   end
 
@@ -41,6 +49,10 @@ defmodule A2A.Types do
   @spec encode_datetime(nil | DateTime.t()) :: String.t() | nil
   def encode_datetime(nil), do: nil
   def encode_datetime(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
+
+  @spec v1?(keyword() | version()) :: boolean()
+  def v1?(opts) when is_list(opts), do: version_from_opts(opts) == :v1_0
+  def v1?(version), do: normalize_version(version) == :v1_0
 
   @spec drop_raw(map(), list()) :: map()
   def drop_raw(map, known_keys) do

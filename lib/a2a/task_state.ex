@@ -27,16 +27,16 @@ defmodule A2A.TaskState do
     unknown: "unknown"
   }
 
-  @latest_map %{
+  @v1_map %{
     submitted: "TASK_STATE_SUBMITTED",
     working: "TASK_STATE_WORKING",
     input_required: "TASK_STATE_INPUT_REQUIRED",
     auth_required: "TASK_STATE_AUTH_REQUIRED",
     completed: "TASK_STATE_COMPLETED",
-    canceled: "TASK_STATE_CANCELLED",
+    canceled: "TASK_STATE_CANCELED",
     rejected: "TASK_STATE_REJECTED",
     failed: "TASK_STATE_FAILED",
-    unknown: "TASK_STATE_UNKNOWN"
+    unknown: "TASK_STATE_UNSPECIFIED"
   }
 
   @spec encode(t() | nil, keyword()) :: String.t() | nil
@@ -49,7 +49,7 @@ defmodule A2A.TaskState do
     version = A2A.Types.version_from_opts(opts)
 
     case version do
-      :latest -> Map.get(@latest_map, state, Atom.to_string(state))
+      :v1_0 -> Map.get(@v1_map, state, Atom.to_string(state))
       _ -> Map.get(@v0_3_map, state, Atom.to_string(state))
     end
   end
@@ -58,7 +58,8 @@ defmodule A2A.TaskState do
   def decode(value, opts \\ [])
   def decode(nil, _opts), do: nil
 
-  def decode(value, _opts) when value in ["canceled", "cancelled", "TASK_STATE_CANCELLED"] do
+  def decode(value, _opts)
+      when value in ["canceled", "cancelled", "TASK_STATE_CANCELED", "TASK_STATE_CANCELLED"] do
     :canceled
   end
 
@@ -91,7 +92,10 @@ defmodule A2A.TaskState do
   end
 
   def decode("unknown", _opts), do: :unknown
-  def decode("TASK_STATE_UNKNOWN", _opts), do: :unknown
+
+  def decode(value, _opts) when value in ["TASK_STATE_UNSPECIFIED", "TASK_STATE_UNKNOWN"],
+    do: :unknown
+
   def decode(value, _opts), do: {:unknown, value}
 
   @spec terminal?(t()) :: boolean()

@@ -4,30 +4,31 @@ defmodule A2A.TypesRoundtripTest do
   test "round-trips message parts across versions" do
     message = build_message()
 
-    for version <- [:v0_3, :latest] do
+    for version <- [:v0_3, :v1_0] do
       map = A2A.Types.Message.to_map(message, version: version)
       decoded = A2A.Types.Message.from_map(map, version: version)
 
       assert decoded.message_id == "msg-1"
 
-      assert Enum.map(decoded.parts, & &1.__struct__) == [
-               A2A.Types.TextPart,
-               A2A.Types.FilePart,
-               A2A.Types.DataPart
-             ]
-
       case version do
         :v0_3 ->
+          assert Enum.map(decoded.parts, & &1.__struct__) == [
+                   A2A.Types.TextPart,
+                   A2A.Types.FilePart,
+                   A2A.Types.DataPart
+                 ]
+
           assert map["role"] == "user"
           assert map["kind"] == "message"
           assert Enum.all?(map["parts"], &Map.has_key?(&1, "kind"))
 
-        :latest ->
+        :v1_0 ->
+          assert Enum.all?(decoded.parts, &match?(%A2A.Types.Part{}, &1))
           assert map["role"] == "ROLE_USER"
-          assert is_list(map["content"])
+          assert is_list(map["parts"])
           refute Map.has_key?(map, "kind")
-          refute Map.has_key?(map, "parts")
-          refute Enum.any?(map["content"], &Map.has_key?(&1, "kind"))
+          refute Map.has_key?(map, "content")
+          refute Enum.any?(map["parts"], &Map.has_key?(&1, "kind"))
       end
     end
   end
@@ -69,7 +70,7 @@ defmodule A2A.TypesRoundtripTest do
       artifact_update: artifact_update
     }
 
-    for version <- [:v0_3, :latest] do
+    for version <- [:v0_3, :v1_0] do
       task_map = A2A.Types.Task.to_map(task, version: version)
       decoded_task = A2A.Types.Task.from_map(task_map, version: version)
 
@@ -82,7 +83,7 @@ defmodule A2A.TypesRoundtripTest do
           assert task_map["kind"] == "task"
           assert get_in(task_map, ["status", "state"]) == "working"
 
-        :latest ->
+        :v1_0 ->
           refute Map.has_key?(task_map, "kind")
           assert get_in(task_map, ["status", "state"]) == "TASK_STATE_WORKING"
       end
@@ -103,7 +104,7 @@ defmodule A2A.TypesRoundtripTest do
           assert status_map["kind"] == "status-update"
           assert artifact_map["kind"] == "artifact-update"
 
-        :latest ->
+        :v1_0 ->
           refute Map.has_key?(status_map, "kind")
           refute Map.has_key?(artifact_map, "kind")
       end
@@ -134,12 +135,17 @@ defmodule A2A.TypesRoundtripTest do
       tenant: "tenant-1"
     }
 
-    for version <- [:v0_3, :latest] do
+    for version <- [:v0_3, :v1_0] do
       map = A2A.Types.SendMessageRequest.to_map(request, version: version)
       decoded = A2A.Types.SendMessageRequest.from_map(map, version: version)
 
       assert decoded.configuration.history_length == 2
-      assert decoded.configuration.push_notification_config.url == "https://example.com/webhook"
+
+      push =
+        decoded.configuration.push_notification_config ||
+          decoded.configuration.task_push_notification_config
+
+      assert push.url == "https://example.com/webhook"
       assert decoded.metadata["trace"] == "1"
     end
   end
@@ -163,11 +169,11 @@ defmodule A2A.TypesRoundtripTest do
       assert encoded["data"] == value
       assert encoded["kind"] == "data"
 
-      latest_encoded =
-        A2A.Types.Part.encode(part, version: :latest, allow_non_object_data: true)
+      v1_encoded =
+        A2A.Types.Part.encode(part, version: :v1_0, allow_non_object_data: true)
 
-      assert latest_encoded["data"] == value
-      refute Map.has_key?(latest_encoded, "kind")
+      assert v1_encoded["data"] == value
+      refute Map.has_key?(v1_encoded, "kind")
     end
   end
 

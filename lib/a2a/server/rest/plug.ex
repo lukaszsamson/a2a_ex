@@ -9,19 +9,29 @@ defmodule A2A.Server.REST.Plug do
   def init(opts) do
     executor = wrap_task_store(Keyword.fetch!(opts, :executor), Keyword.get(opts, :task_store))
 
-    %{executor: executor, version: Keyword.get(opts, :version, :v0_3)}
+    version = opts |> Keyword.get(:version, :v0_3) |> A2A.Types.normalize_version()
+
+    %{executor: executor, version: version}
     |> Map.put(:base_path, Keyword.get(opts, :base_path, default_base_path(opts)))
     |> Map.put(:wire_format, Keyword.get(opts, :wire_format, :spec_json))
     |> Map.put(:capabilities, Keyword.get(opts, :capabilities, %{}))
     |> Map.put(:required_extensions, Keyword.get(opts, :required_extensions, []))
-    |> Map.put(:subscribe_verb, Keyword.get(opts, :subscribe_verb, :post))
+    |> Map.put(
+      :subscribe_verb,
+      Keyword.get(opts, :subscribe_verb, if(version == :v1_0, do: :get, else: :post))
+    )
     |> Map.put(:stream_timeout, Keyword.get(opts, :stream_timeout, :infinity))
     |> Map.put(:request_timeout, Keyword.get(opts, :request_timeout, :infinity))
     |> Map.put(:stream_task_first, Keyword.get(opts, :stream_task_first, true))
+    |> Map.put(:response_media_type, Keyword.get(opts, :response_media_type))
+    |> Map.put(:error_status_overrides, Keyword.get(opts, :error_status_overrides, %{}))
   end
 
   @spec call(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def call(conn, opts) do
+    conn = assign(conn, :a2a_version, opts.version)
+    conn = assign(conn, :a2a_response_media_type, opts.response_media_type)
+    conn = assign(conn, :a2a_error_status_overrides, opts.error_status_overrides)
     conn = fetch_query_params(conn)
     conn = A2A.Server.Headers.ensure_request_id(conn)
     extensions = A2A.Server.Headers.extensions(conn)
@@ -43,6 +53,8 @@ defmodule A2A.Server.REST.Plug do
 
     case strip_base(conn.path_info, base_segments) do
       {:ok, path} ->
+        {conn, path} = normalize_tenant_path(conn, path, opts.version)
+
         case {conn.method, path} do
           {"POST", ["message:send"]} ->
             handle_send_message(conn, opts, extensions)
@@ -92,7 +104,10 @@ defmodule A2A.Server.REST.Plug do
 
   defp handle_send_message(conn, opts, extensions) do
     with {:ok, body} <- read_json(conn),
-         request <- A2A.Types.SendMessageRequest.from_map(body, type_opts(opts)),
+         :ok <- ensure_tenant_matches(conn, body),
+         :ok <- validate_v1(opts, :send_message, body),
+         request <-
+           A2A.Types.SendMessageRequest.from_map(with_request_tenant(body, conn), type_opts(opts)),
          {:ok, response} <-
            run_request(opts, fn ->
              A2A.Server.ExecutorRunner.call(opts.executor, :handle_send_message, [
@@ -111,7 +126,10 @@ defmodule A2A.Server.REST.Plug do
     with :ok <- ensure_capability(opts.capabilities, :streaming),
          :ok <- ensure_handler(opts.executor, :handle_stream_message, 3),
          {:ok, body} <- read_json(conn),
-         request <- A2A.Types.SendMessageRequest.from_map(body, type_opts(opts)) do
+         :ok <- ensure_tenant_matches(conn, body),
+         :ok <- validate_v1(opts, :send_message, body),
+         request <-
+           A2A.Types.SendMessageRequest.from_map(with_request_tenant(body, conn), type_opts(opts)) do
       conn = start_stream(conn, extensions)
       stream = stream_state(conn, opts.stream_task_first)
       emit = fn event -> stream_emit(stream, event, opts) end
@@ -139,7 +157,8 @@ defmodule A2A.Server.REST.Plug do
   end
 
   defp handle_get_task(conn, opts, task_id, extensions) do
-    with {:ok, response} <-
+    with :ok <- validate_v1(opts, :get_task, conn.query_params),
+         {:ok, response} <-
            run_request(opts, fn ->
              A2A.Server.ExecutorRunner.call(opts.executor, :handle_get_task, [
                task_id,
@@ -154,9 +173,13 @@ defmodule A2A.Server.REST.Plug do
   end
 
   defp handle_list_tasks(conn, opts, extensions) do
-    request = A2A.Types.ListTasksRequest.from_map(conn.query_params, version: opts.version)
+    request =
+      conn.query_params
+      |> with_request_tenant(conn)
+      |> A2A.Types.ListTasksRequest.from_map(type_opts(opts))
 
-    with {:ok, response} <-
+    with :ok <- validate_v1(opts, :list_tasks, conn.query_params),
+         {:ok, response} <-
            run_request(opts, fn ->
              A2A.Server.ExecutorRunner.call(opts.executor, :handle_list_tasks, [
                request,
@@ -178,11 +201,13 @@ defmodule A2A.Server.REST.Plug do
     case String.split(segment, ":") do
       [task_id, "cancel"] ->
         if method == :post do
-          with {:ok, response} <-
+          with {:ok, body} <- read_optional_json(conn),
+               :ok <- ensure_tenant_matches(conn, body),
+               {:ok, response} <-
                  run_request(opts, fn ->
                    A2A.Server.ExecutorRunner.call(opts.executor, :handle_cancel_task, [
                      task_id,
-                     ctx(conn, extensions)
+                     Map.put(ctx(conn, extensions), :metadata, body["metadata"])
                    ])
                  end) do
             send_json(
@@ -201,7 +226,8 @@ defmodule A2A.Server.REST.Plug do
       [task_id, "subscribe"] ->
         if subscribe_allowed?(opts.subscribe_verb, method) do
           with :ok <- ensure_capability(opts.capabilities, :streaming),
-               :ok <- ensure_handler(opts.executor, :handle_subscribe, 3) do
+               :ok <- ensure_handler(opts.executor, :handle_subscribe, 3),
+               :ok <- preflight_subscribe(opts.executor, task_id) do
             conn = start_stream(conn, extensions)
             stream = stream_state(conn, false)
             emit = fn event -> stream_emit(stream, event, opts) end
@@ -239,7 +265,9 @@ defmodule A2A.Server.REST.Plug do
     with :ok <- ensure_capability(opts.capabilities, :push_notifications),
          :ok <- ensure_handler(opts.executor, :handle_push_notification_config_set, 3),
          {:ok, body} <- read_json(conn),
-         config <- decode_push_config_set_request(body),
+         :ok <- ensure_tenant_matches(conn, body),
+         :ok <- validate_v1(opts, :push_config, body),
+         config <- decode_push_config_set_request(body) |> put_push_path_fields(task_id, conn),
          {:ok, response} <-
            run_request(opts, fn ->
              A2A.Server.ExecutorRunner.call(opts.executor, :handle_push_notification_config_set, [
@@ -317,7 +345,7 @@ defmodule A2A.Server.REST.Plug do
   end
 
   defp handle_extended_agent_card(conn, opts, extensions) do
-    with :ok <- ensure_latest(opts.version),
+    with :ok <- ensure_v1(opts.version),
          :ok <- ensure_capability(opts.capabilities, :extended_agent_card),
          :ok <- ensure_handler(opts.executor, :handle_get_extended_agent_card, 1),
          {:ok, card} <-
@@ -403,7 +431,7 @@ defmodule A2A.Server.REST.Plug do
       end
 
     conn = flush_buffer(conn, state.buffer, opts)
-    conn = if error, do: chunk_error(conn, error), else: conn
+    conn = if error, do: chunk_error(conn, error, opts), else: conn
 
     stream_cleanup(stream)
     conn
@@ -451,7 +479,6 @@ defmodule A2A.Server.REST.Plug do
     end
   end
 
-  defp maybe_chunk_response(conn, nil, _opts), do: conn
   defp maybe_chunk_response(conn, response, opts), do: chunk_struct(conn, response, opts)
 
   defp chunk_struct(conn, struct, opts) do
@@ -463,8 +490,13 @@ defmodule A2A.Server.REST.Plug do
     end
   end
 
-  defp chunk_error(conn, %A2A.Error{} = error) do
-    payload = A2A.Server.SSE.encode_event(%{"error" => A2A.Error.to_map(error)})
+  defp chunk_error(conn, %A2A.Error{} = error, opts) do
+    encoded =
+      if opts.version == :v1_0,
+        do: %{"error" => A2A.Error.google_rpc_status(error)},
+        else: %{"error" => A2A.Error.to_map(error)}
+
+    payload = A2A.Server.SSE.encode_event(encoded)
 
     case chunk(conn, payload) do
       {:ok, conn} -> conn
@@ -528,8 +560,25 @@ defmodule A2A.Server.REST.Plug do
   end
 
   defp type_opts(opts) do
-    [version: opts.version, wire_format: opts.wire_format]
+    A2A.Protocol.type_opts(opts.version, opts.wire_format)
   end
+
+  defp validate_v1(%{version: :v1_0}, operation, value) do
+    case apply(A2A.Protocol.V1_0.Validation, operation, [value]) do
+      :ok -> :ok
+      {:error, message} -> {:error, A2A.Error.new(:invalid_params, message)}
+    end
+  end
+
+  defp validate_v1(_opts, _operation, _value), do: :ok
+
+  defp preflight_subscribe({module, executor_opts}, task_id) do
+    if function_exported?(module, :validate_subscribe, 2),
+      do: module.validate_subscribe(executor_opts, task_id),
+      else: :ok
+  end
+
+  defp preflight_subscribe(_executor, _task_id), do: :ok
 
   defp read_json(conn) do
     with :ok <- ensure_content_type(conn) do
@@ -537,14 +586,20 @@ defmodule A2A.Server.REST.Plug do
         {:ok, body, _conn} ->
           case Jason.decode(body) do
             {:ok, map} -> {:ok, map}
-            {:error, _} -> {:error, A2A.Error.new(:invalid_agent_response, "Invalid JSON")}
+            {:error, _} -> {:error, request_payload_error(conn, "Invalid JSON")}
           end
 
         {:more, _body, _conn} ->
-          {:error, A2A.Error.new(:invalid_agent_response, "Request too large")}
+          {:error, request_payload_error(conn, "Request too large")}
       end
     end
   end
+
+  defp request_payload_error(%Plug.Conn{assigns: %{a2a_version: :v1_0}}, message),
+    do: A2A.Error.new(:invalid_params, message)
+
+  defp request_payload_error(_conn, message),
+    do: A2A.Error.new(:invalid_agent_response, message)
 
   defp ensure_content_type(conn) do
     case get_req_header(conn, "content-type") do
@@ -570,18 +625,45 @@ defmodule A2A.Server.REST.Plug do
   defp send_json(conn, status, map, extensions) do
     conn
     |> A2A.Server.Headers.put_extensions(extensions)
-    |> put_resp_content_type("application/json")
+    |> put_resp_content_type(response_media_type(conn))
     |> send_resp(status, Jason.encode!(map))
   end
 
   defp send_error(conn, %A2A.Error{} = error, extensions) do
     conn = maybe_put_www_authenticate(conn, error)
+    version = conn.assigns[:a2a_version] || :v0_3
 
-    send_json(
-      conn,
-      A2A.Error.http_status(error),
-      %{"error" => A2A.Error.to_map(error)},
-      extensions
+    body =
+      if version == :v1_0,
+        do: %{"error" => A2A.Error.google_rpc_status(error)},
+        else: %{"error" => A2A.Error.to_map(error)}
+
+    if version == :v1_0 do
+      conn
+      |> A2A.Server.Headers.put_extensions(extensions)
+      |> put_resp_content_type(response_media_type(conn))
+      |> send_resp(error_http_status(conn, error, version), Jason.encode!(body))
+    else
+      send_json(conn, A2A.Error.http_status(error, version), body, extensions)
+    end
+  end
+
+  defp response_media_type(%Plug.Conn{assigns: %{a2a_response_media_type: value}})
+       when is_binary(value),
+       do: value
+
+  defp response_media_type(%Plug.Conn{assigns: %{a2a_version: :v1_0}}),
+    do: "application/a2a+json"
+
+  defp response_media_type(_conn), do: "application/json"
+
+  defp error_http_status(conn, %A2A.Error{} = error, version) do
+    overrides = conn.assigns[:a2a_error_status_overrides] || %{}
+
+    Map.get(
+      overrides,
+      A2A.Error.normalize_type(error.type),
+      A2A.Error.http_status(error, version)
     )
   end
 
@@ -650,12 +732,12 @@ defmodule A2A.Server.REST.Plug do
   defp subscribe_allowed?(:get, :get), do: true
   defp subscribe_allowed?(_, _), do: false
 
-  defp ensure_latest(:latest), do: :ok
+  defp ensure_v1(:v1_0), do: :ok
 
-  defp ensure_latest(_),
+  defp ensure_v1(_),
     do: {:error, A2A.Error.new(:unsupported_operation, "Extended agent card not supported")}
 
-  defp ensure_v0_3(:latest),
+  defp ensure_v0_3(:v1_0),
     do: {:error, A2A.Error.new(:unsupported_operation, "Card endpoint not supported")}
 
   defp ensure_v0_3(_), do: :ok
@@ -673,8 +755,38 @@ defmodule A2A.Server.REST.Plug do
     A2A.Types.PushNotificationConfig.from_map(config)
   end
 
-  defp encode_push_config_list(response, :latest) do
-    %{"configs" => Enum.map(response, &encode_push_config/1)}
+  defp put_push_path_fields(config, task_id, conn) do
+    %{config | task_id: task_id, tenant: config.tenant || conn.assigns[:a2a_tenant]}
+  end
+
+  defp read_optional_json(conn) do
+    case read_body(conn) do
+      {:ok, "", _conn} ->
+        {:ok, %{}}
+
+      {:ok, body, _conn} ->
+        case Jason.decode(body) do
+          {:ok, decoded} when is_map(decoded) -> {:ok, decoded}
+          _ -> {:error, A2A.Error.new(:invalid_params, "Invalid JSON request body")}
+        end
+
+      {:more, _body, _conn} ->
+        {:error, A2A.Error.new(:invalid_params, "Request body too large")}
+
+      {:error, reason} ->
+        {:error, A2A.Error.new(:invalid_params, inspect(reason))}
+    end
+  end
+
+  defp encode_push_config_list(
+         %A2A.Types.ListTaskPushNotificationConfigsResponse{} = response,
+         :v1_0
+       ) do
+    A2A.Types.ListTaskPushNotificationConfigsResponse.to_map(response)
+  end
+
+  defp encode_push_config_list(response, :v1_0) do
+    %{"configs" => Enum.map(response, &encode_push_config/1), "nextPageToken" => ""}
   end
 
   defp encode_push_config_list(response, _) do
@@ -690,6 +802,8 @@ defmodule A2A.Server.REST.Plug do
   defp ctx(conn, extensions) do
     %{
       identity: conn.assigns[:identity],
+      tenant: conn.assigns[:a2a_tenant],
+      protocol_version: conn.assigns[:a2a_version],
       request_id: A2A.Server.Headers.request_id(conn),
       extensions: extensions
     }
@@ -700,8 +814,8 @@ defmodule A2A.Server.REST.Plug do
   end
 
   defp default_base_path(opts) do
-    case Keyword.get(opts, :version, :v0_3) do
-      :latest -> ""
+    case opts |> Keyword.get(:version, :v0_3) |> A2A.Types.normalize_version() do
+      :v1_0 -> ""
       _ -> "/v1"
     end
   end
@@ -719,6 +833,43 @@ defmodule A2A.Server.REST.Plug do
       {:ok, rest}
     else
       :error
+    end
+  end
+
+  defp normalize_tenant_path(conn, [segment | rest] = path, :v1_0) do
+    if segment in ["message:send", "message:stream", "tasks", "extendedAgentCard"] do
+      {conn, path}
+    else
+      {assign(conn, :a2a_tenant, segment), rest}
+    end
+  end
+
+  defp normalize_tenant_path(conn, path, _version), do: {conn, path}
+
+  defp with_request_tenant(map, conn) do
+    case conn.assigns[:a2a_tenant] do
+      nil -> map
+      tenant -> Map.put(map, "tenant", tenant)
+    end
+  end
+
+  defp ensure_tenant_matches(conn, params) when is_map(params) do
+    case {conn.assigns[:a2a_tenant], Map.get(params, "tenant") || Map.get(params, :tenant)} do
+      {nil, _} ->
+        :ok
+
+      {_path_tenant, nil} ->
+        :ok
+
+      {tenant, tenant} ->
+        :ok
+
+      {path_tenant, request_tenant} ->
+        {:error,
+         A2A.Error.new(
+           :invalid_params,
+           "Request tenant #{inspect(request_tenant)} does not match path tenant #{inspect(path_tenant)}"
+         )}
     end
   end
 

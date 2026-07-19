@@ -3,7 +3,7 @@ defmodule A2A.Types.AgentExtension do
   Agent extension descriptor.
   """
 
-  defstruct [:uri, :version, :required, :metadata, :raw]
+  defstruct [:uri, :description, :params, :required, :version, :metadata, :raw]
 
   @type t :: %__MODULE__{}
 
@@ -11,20 +11,42 @@ defmodule A2A.Types.AgentExtension do
   def from_map(map) do
     %__MODULE__{
       uri: map["uri"],
+      description: map["description"],
+      params: map["params"],
       version: map["version"],
       required: map["required"],
       metadata: map["metadata"],
-      raw: A2A.Types.drop_raw(map, ["uri", "version", "required", "metadata"])
+      raw:
+        A2A.Types.drop_raw(map, [
+          "uri",
+          "description",
+          "params",
+          "version",
+          "required",
+          "metadata"
+        ])
     }
   end
 
-  @spec to_map(%__MODULE__{}) :: map()
-  def to_map(%__MODULE__{} = extension) do
-    %{}
-    |> A2A.Types.put_if("uri", extension.uri)
-    |> A2A.Types.put_if("version", extension.version)
-    |> A2A.Types.put_if("required", extension.required)
-    |> A2A.Types.put_if("metadata", extension.metadata)
+  @spec to_map(%__MODULE__{}, keyword()) :: map()
+  def to_map(%__MODULE__{} = extension, opts \\ []) do
+    map =
+      %{}
+      |> A2A.Types.put_if("uri", extension.uri)
+      |> A2A.Types.put_if("description", extension.description)
+      |> A2A.Types.put_if("params", extension.params)
+      |> A2A.Types.put_if("required", extension.required)
+
+    map =
+      if A2A.Types.v1?(opts) do
+        map
+      else
+        map
+        |> A2A.Types.put_if("version", extension.version)
+        |> A2A.Types.put_if("metadata", extension.metadata)
+      end
+
+    map
     |> A2A.Types.merge_raw(extension.raw)
   end
 end
@@ -57,23 +79,26 @@ defmodule A2A.Types.AgentCapabilities do
     }
   end
 
-  @spec to_map(nil | %__MODULE__{}) :: map() | nil
-  def to_map(nil), do: nil
+  @spec to_map(nil | %__MODULE__{}, keyword()) :: map() | nil
+  def to_map(capabilities, opts \\ [])
+  def to_map(nil, _opts), do: nil
 
-  def to_map(%__MODULE__{} = capabilities) do
+  def to_map(%__MODULE__{} = capabilities, opts) do
     %{}
     |> A2A.Types.put_if("streaming", capabilities.streaming)
     |> A2A.Types.put_if("pushNotifications", capabilities.push_notifications)
     |> A2A.Types.put_if("extendedAgentCard", capabilities.extended_agent_card)
-    |> A2A.Types.put_if("extensions", encode_extensions(capabilities.extensions))
+    |> A2A.Types.put_if("extensions", encode_extensions(capabilities.extensions, opts))
     |> A2A.Types.merge_raw(capabilities.raw)
   end
 
   defp decode_extensions(nil), do: nil
   defp decode_extensions(list), do: Enum.map(list, &A2A.Types.AgentExtension.from_map/1)
 
-  defp encode_extensions(nil), do: nil
-  defp encode_extensions(list), do: Enum.map(list, &A2A.Types.AgentExtension.to_map/1)
+  defp encode_extensions(nil, _opts), do: nil
+
+  defp encode_extensions(list, opts),
+    do: Enum.map(list, &A2A.Types.AgentExtension.to_map(&1, opts))
 end
 
 defmodule A2A.Types.AgentInterface do
@@ -81,7 +106,7 @@ defmodule A2A.Types.AgentInterface do
   Transport binding metadata for an agent.
   """
 
-  defstruct [:protocol_binding, :url, :tenant, :raw]
+  defstruct [:protocol_binding, :protocol_version, :url, :tenant, :raw]
 
   @type t :: %__MODULE__{}
 
@@ -89,9 +114,10 @@ defmodule A2A.Types.AgentInterface do
   def from_map(map) do
     %__MODULE__{
       protocol_binding: map["protocolBinding"],
+      protocol_version: map["protocolVersion"],
       url: map["url"],
       tenant: map["tenant"],
-      raw: A2A.Types.drop_raw(map, ["protocolBinding", "url", "tenant"])
+      raw: A2A.Types.drop_raw(map, ["protocolBinding", "protocolVersion", "url", "tenant"])
     }
   end
 
@@ -99,6 +125,7 @@ defmodule A2A.Types.AgentInterface do
   def to_map(%__MODULE__{} = interface) do
     %{}
     |> A2A.Types.put_if("protocolBinding", interface.protocol_binding)
+    |> A2A.Types.put_if("protocolVersion", interface.protocol_version)
     |> A2A.Types.put_if("url", interface.url)
     |> A2A.Types.put_if("tenant", interface.tenant)
     |> A2A.Types.merge_raw(interface.raw)
@@ -119,6 +146,7 @@ defmodule A2A.Types.AgentSkill do
     :input_modes,
     :output_modes,
     :security,
+    :security_requirements,
     :raw
   ]
 
@@ -135,6 +163,7 @@ defmodule A2A.Types.AgentSkill do
       input_modes: map["inputModes"],
       output_modes: map["outputModes"],
       security: map["security"],
+      security_requirements: map["securityRequirements"],
       raw:
         A2A.Types.drop_raw(map, [
           "id",
@@ -144,22 +173,28 @@ defmodule A2A.Types.AgentSkill do
           "examples",
           "inputModes",
           "outputModes",
-          "security"
+          "security",
+          "securityRequirements"
         ])
     }
   end
 
-  @spec to_map(%__MODULE__{}) :: map()
-  def to_map(%__MODULE__{} = skill) do
-    %{}
-    |> A2A.Types.put_if("id", skill.id)
-    |> A2A.Types.put_if("name", skill.name)
-    |> A2A.Types.put_if("description", skill.description)
-    |> A2A.Types.put_if("tags", skill.tags)
-    |> A2A.Types.put_if("examples", skill.examples)
-    |> A2A.Types.put_if("inputModes", skill.input_modes)
-    |> A2A.Types.put_if("outputModes", skill.output_modes)
-    |> A2A.Types.put_if("security", skill.security)
+  @spec to_map(%__MODULE__{}, keyword()) :: map()
+  def to_map(%__MODULE__{} = skill, opts \\ []) do
+    map =
+      %{}
+      |> A2A.Types.put_if("id", skill.id)
+      |> A2A.Types.put_if("name", skill.name)
+      |> A2A.Types.put_if("description", skill.description)
+      |> A2A.Types.put_if("tags", skill.tags)
+      |> A2A.Types.put_if("examples", skill.examples)
+      |> A2A.Types.put_if("inputModes", skill.input_modes)
+      |> A2A.Types.put_if("outputModes", skill.output_modes)
+      |> A2A.Types.put_if("securityRequirements", skill.security_requirements)
+
+    map = if A2A.Types.v1?(opts), do: map, else: A2A.Types.put_if(map, "security", skill.security)
+
+    map
     |> A2A.Types.merge_raw(skill.raw)
   end
 end
@@ -229,7 +264,7 @@ defmodule A2A.Types.AuthenticationInfo do
   Authentication metadata for push config.
   """
 
-  defstruct [:schemes, :credentials, :raw]
+  defstruct [:scheme, :schemes, :credentials, :raw]
 
   @type t :: %__MODULE__{}
 
@@ -238,19 +273,31 @@ defmodule A2A.Types.AuthenticationInfo do
 
   def from_map(map) do
     %__MODULE__{
+      scheme: map["scheme"],
       schemes: map["schemes"],
       credentials: map["credentials"],
-      raw: A2A.Types.drop_raw(map, ["schemes", "credentials"])
+      raw: A2A.Types.drop_raw(map, ["scheme", "schemes", "credentials"])
     }
   end
 
-  @spec to_map(nil | %__MODULE__{}) :: map() | nil
-  def to_map(nil), do: nil
+  @spec to_map(nil | %__MODULE__{}, keyword()) :: map() | nil
+  def to_map(auth, opts \\ [])
+  def to_map(nil, _opts), do: nil
 
-  def to_map(%__MODULE__{} = auth) do
-    %{}
-    |> A2A.Types.put_if("schemes", auth.schemes)
-    |> A2A.Types.put_if("credentials", auth.credentials)
+  def to_map(%__MODULE__{} = auth, opts) do
+    scheme =
+      if A2A.Types.v1?(opts),
+        do: auth.scheme || List.first(auth.schemes || []),
+        else: auth.scheme
+
+    map =
+      %{}
+      |> A2A.Types.put_if("scheme", scheme)
+      |> A2A.Types.put_if("credentials", auth.credentials)
+
+    map = if A2A.Types.v1?(opts), do: map, else: A2A.Types.put_if(map, "schemes", auth.schemes)
+
+    map
     |> A2A.Types.merge_raw(auth.raw)
   end
 end
@@ -270,6 +317,7 @@ defmodule A2A.Types.AgentCard do
     :skills,
     :security_schemes,
     :security,
+    :security_requirements,
     :documentation_url,
     :icon_url,
     :provider,
@@ -298,6 +346,7 @@ defmodule A2A.Types.AgentCard do
       skills: decode_list(map["skills"], &A2A.Types.AgentSkill.from_map/1),
       security_schemes: map["securitySchemes"],
       security: map["security"],
+      security_requirements: map["securityRequirements"],
       documentation_url: map["documentationUrl"],
       icon_url: map["iconUrl"],
       provider: A2A.Types.AgentProvider.from_map(map["provider"]),
@@ -322,6 +371,7 @@ defmodule A2A.Types.AgentCard do
           "skills",
           "securitySchemes",
           "security",
+          "securityRequirements",
           "documentationUrl",
           "iconUrl",
           "provider",
@@ -345,12 +395,19 @@ defmodule A2A.Types.AgentCard do
     |> A2A.Types.put_if("name", card.name)
     |> A2A.Types.put_if("description", card.description)
     |> A2A.Types.put_if("version", card.version)
-    |> A2A.Types.put_if("capabilities", A2A.Types.AgentCapabilities.to_map(card.capabilities))
+    |> A2A.Types.put_if(
+      "capabilities",
+      A2A.Types.AgentCapabilities.to_map(card.capabilities, opts)
+    )
     |> A2A.Types.put_if("defaultInputModes", card.default_input_modes)
     |> A2A.Types.put_if("defaultOutputModes", card.default_output_modes)
-    |> A2A.Types.put_if("skills", encode_list(card.skills, &A2A.Types.AgentSkill.to_map/1))
+    |> A2A.Types.put_if(
+      "skills",
+      encode_list(card.skills, &A2A.Types.AgentSkill.to_map(&1, opts))
+    )
     |> A2A.Types.put_if("securitySchemes", card.security_schemes)
-    |> A2A.Types.put_if("security", card.security)
+    |> maybe_put_v0_3_security(card, version)
+    |> A2A.Types.put_if("securityRequirements", card.security_requirements)
     |> A2A.Types.put_if("documentationUrl", card.documentation_url)
     |> A2A.Types.put_if("iconUrl", card.icon_url)
     |> A2A.Types.put_if("provider", A2A.Types.AgentProvider.to_map(card.provider))
@@ -359,7 +416,7 @@ defmodule A2A.Types.AgentCard do
       encode_list(card.signatures, &A2A.Types.AgentCardSignature.to_map/1)
     )
     |> maybe_put_v0_3(card, version)
-    |> maybe_put_latest(card, version)
+    |> maybe_put_v1(card, version)
     |> A2A.Types.merge_raw(card.raw)
   end
 
@@ -368,7 +425,7 @@ defmodule A2A.Types.AgentCard do
   defp encode_list(nil, _fun), do: nil
   defp encode_list(list, fun), do: Enum.map(list, fun)
 
-  defp maybe_put_v0_3(map, _card, :latest), do: map
+  defp maybe_put_v0_3(map, _card, :v1_0), do: map
 
   defp maybe_put_v0_3(map, card, _version) do
     map
@@ -385,14 +442,18 @@ defmodule A2A.Types.AgentCard do
     )
   end
 
-  defp maybe_put_latest(map, card, :latest) do
+  defp maybe_put_v0_3_security(map, _card, :v1_0), do: map
+
+  defp maybe_put_v0_3_security(map, card, _version),
+    do: A2A.Types.put_if(map, "security", card.security)
+
+  defp maybe_put_v1(map, card, :v1_0) do
     map
     |> A2A.Types.put_if(
       "supportedInterfaces",
       encode_list(card.supported_interfaces, &A2A.Types.AgentInterface.to_map/1)
     )
-    |> A2A.Types.put_if("protocolVersions", card.protocol_versions)
   end
 
-  defp maybe_put_latest(map, _card, _version), do: map
+  defp maybe_put_v1(map, _card, _version), do: map
 end

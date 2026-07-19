@@ -30,7 +30,7 @@ defmodule A2A.TransportJSONRPCWireFormatTest do
     end
   end
 
-  test "send_message keeps spec-json params shape for JSON-RPC calls" do
+  test "v0.3 proto_json compatibility stays behind the legacy adapter" do
     server = A2A.TestHTTPServer.start(ProtoJSONCapturePlug, plug_opts: [parent: self()])
     on_exit(fn -> A2A.TestHTTPServer.stop(server.ref) end)
 
@@ -57,8 +57,8 @@ defmodule A2A.TransportJSONRPCWireFormatTest do
 
     assert_received {:jsonrpc_proto_request_payload, payload}
 
-    assert payload["params"]["message"]["role"] == "user"
-    assert payload["params"]["message"]["parts"] == [%{"kind" => "text", "text" => "hello"}]
-    refute Map.has_key?(payload["params"]["message"], "content")
+    assert payload["params"]["message"]["role"] == "ROLE_USER"
+    assert payload["params"]["message"]["content"] == [%{"text" => "hello"}]
+    refute Map.has_key?(payload["params"]["message"], "parts")
   end
 end

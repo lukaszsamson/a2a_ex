@@ -16,14 +16,16 @@ defmodule A2A.Client.Config do
     :wire_format,
     :auth,
     :req_options,
-    :transport_opts
+    :transport_opts,
+    :tenant,
+    :cancel_metadata
   ]
 
   @type t :: %__MODULE__{}
 
   @spec new(String.t() | nil, keyword()) :: t()
   def new(target, opts \\ []) do
-    version = Keyword.get(opts, :version, :v0_3)
+    version = opts |> Keyword.get(:version, :v0_3) |> A2A.Types.normalize_version()
     base_url = if is_binary(target), do: target, else: nil
 
     %__MODULE__{
@@ -40,24 +42,33 @@ defmodule A2A.Client.Config do
           Keyword.get(opts, :base_path, default_base_path(version))
         ),
       agent_card_path: Keyword.get(opts, :agent_card_path, "/.well-known/agent-card.json"),
-      subscribe_verb: Keyword.get(opts, :subscribe_verb, :post),
+      subscribe_verb: Keyword.get(opts, :subscribe_verb, default_subscribe_verb(version)),
       wire_format: Keyword.get(opts, :wire_format, :spec_json),
       auth: Keyword.get(opts, :auth),
       req_options: Keyword.get(opts, :req_options, []),
-      transport_opts: Keyword.get(opts, :transport_opts, [])
+      transport_opts: Keyword.get(opts, :transport_opts, []),
+      tenant: Keyword.get(opts, :tenant),
+      cancel_metadata: Keyword.get(opts, :metadata)
     }
   end
 
   @spec from_agent_card(A2A.Types.AgentCard.t(), keyword()) :: t()
   def from_agent_card(%A2A.Types.AgentCard{} = card, opts \\ []) do
     interface = A2A.Client.select_interface(card, opts)
+
+    if is_nil(interface) and (card.supported_interfaces || []) != [] do
+      raise ArgumentError,
+            "agent card has no interface matching the requested protocol version and binding"
+    end
+
     base_url = (interface && interface.url) || card.url
     transport = interface && A2A.Client.transport_for_binding(interface.protocol_binding)
 
     opts =
       opts
-      |> Keyword.put_new(:version, version_from_card(card))
+      |> Keyword.put_new(:version, version_from_interface(interface, card))
       |> Keyword.put_new(:transport, transport || A2A.Transport.REST)
+      |> Keyword.put_new(:tenant, interface && interface.tenant)
 
     config = new(base_url, opts)
     %{config | transport_opts: Keyword.get(opts, :transport_opts, [])}
@@ -104,8 +115,8 @@ defmodule A2A.Client.Config do
     headers ++ [{header_name, header_value}]
   end
 
-  defp maybe_add_version(headers, %__MODULE__{version: :latest}) do
-    headers ++ [{"a2a-version", "0.3"}]
+  defp maybe_add_version(headers, %__MODULE__{version: :v1_0}) do
+    put_header_unless_present(headers, "a2a-version", "1.0")
   end
 
   defp maybe_add_version(headers, _config), do: headers
@@ -126,14 +137,40 @@ defmodule A2A.Client.Config do
 
   defp maybe_add_auth(headers, _config), do: headers
 
-  defp default_base_path(:latest), do: ""
+  defp default_base_path(:v1_0), do: ""
   defp default_base_path(_), do: "/v1"
+
+  defp version_from_interface(%A2A.Types.AgentInterface{protocol_version: version}, _card)
+       when is_binary(version) do
+    parse_protocol_version(version)
+  end
+
+  defp version_from_interface(_interface, card), do: version_from_card(card)
 
   defp version_from_card(%A2A.Types.AgentCard{protocol_versions: [version | _]})
        when is_binary(version) do
-    if String.starts_with?(version, "0.3"), do: :v0_3, else: :latest
+    parse_protocol_version(version)
   end
 
   defp version_from_card(%A2A.Types.AgentCard{protocol_version: "0.3.0"}), do: :v0_3
   defp version_from_card(_card), do: :v0_3
+
+  defp parse_protocol_version(version) do
+    case String.split(version, ".") do
+      ["1", "0" | _] -> :v1_0
+      ["0", "3" | _] -> :v0_3
+      _ -> raise ArgumentError, "unsupported A2A protocol version #{inspect(version)}"
+    end
+  end
+
+  defp default_subscribe_verb(:v1_0), do: :get
+  defp default_subscribe_verb(_), do: :post
+
+  defp put_header_unless_present(headers, name, value) do
+    if Enum.any?(headers, fn {key, _} -> String.downcase(key) == name end) do
+      headers
+    else
+      headers ++ [{name, value}]
+    end
+  end
 end

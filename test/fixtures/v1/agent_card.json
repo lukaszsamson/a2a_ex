@@ -1,0 +1,52 @@
+{
+  "name": "Schema Fixture Agent",
+  "description": "Agent card derived from lf.a2a.v1.AgentCard",
+  "supportedInterfaces": [
+    {
+      "url": "https://agent.example.com/rpc",
+      "protocolBinding": "JSONRPC",
+      "tenant": "acme",
+      "protocolVersion": "1.0"
+    },
+    {
+      "url": "https://agent.example.com/http-json",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "version": "2.4.0",
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": true,
+    "extendedAgentCard": true,
+    "extensions": [
+      {
+        "uri": "urn:example:citations",
+        "description": "Adds citations",
+        "required": false,
+        "params": {"format": "uri"}
+      }
+    ]
+  },
+  "securitySchemes": {
+    "bearer": {
+      "httpAuthSecurityScheme": {
+        "scheme": "Bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  },
+  "securityRequirements": [{"schemes": {"bearer": {"list": []}}}],
+  "defaultInputModes": ["text/plain", "application/json"],
+  "defaultOutputModes": ["text/plain"],
+  "skills": [
+    {
+      "id": "echo",
+      "name": "Echo",
+      "description": "Echo supplied content",
+      "tags": ["test"],
+      "examples": ["Echo hello"],
+      "securityRequirements": [{"schemes": {"bearer": {"list": []}}}]
+    }
+  ]
+}

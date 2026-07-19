@@ -45,20 +45,20 @@ defmodule A2A.AgentCardValidationTest do
     assert message =~ "capabilities"
   end
 
-  test "validates latest supported interfaces" do
+  test "validates v1.0 supported interfaces" do
     server = A2A.TestHTTPServer.start(A2A.TestLatestAgentCardPlug)
     on_exit(fn -> A2A.TestHTTPServer.stop(server.ref) end)
 
-    assert {:ok, %A2A.Types.AgentCard{name: "latest-demo"}} =
-             A2A.Client.discover(server.base_url, version: :latest)
+    assert {:ok, %A2A.Types.AgentCard{name: "v1-demo"}} =
+             A2A.Client.discover(server.base_url, version: :v1_0)
   end
 
-  test "rejects invalid latest supported interfaces" do
+  test "rejects invalid v1.0 supported interfaces" do
     server = A2A.TestHTTPServer.start(A2A.TestInvalidLatestAgentCardPlug)
     on_exit(fn -> A2A.TestHTTPServer.stop(server.ref) end)
 
     assert {:error, %A2A.Error{type: :invalid_agent_response}} =
-             A2A.Client.discover(server.base_url, version: :latest)
+             A2A.Client.discover(server.base_url, version: :v1_0)
   end
 
   test "preserves unknown fields in agent card raw" do
@@ -82,7 +82,7 @@ defmodule A2A.AgentCardValidationTest do
     [interface] = card.supported_interfaces
     assert interface.raw["extra"] == "interface-value"
 
-    encoded = A2A.Types.AgentCard.to_map(card, version: :latest)
+    encoded = A2A.Types.AgentCard.to_map(card, version: :v1_0)
     assert encoded["extraField"] == "value"
     assert List.first(encoded["supportedInterfaces"])["extra"] == "interface-value"
   end

@@ -108,6 +108,28 @@ defmodule A2A.TaskStoreExecutorTest do
     end
   end
 
+  defmodule AsyncCompletionExecutor do
+    def handle_send_message(request, ctx) do
+      task = %A2A.Types.Task{
+        id: "async-task",
+        context_id: request.message.context_id,
+        status: %A2A.Types.TaskStatus{state: :submitted}
+      }
+
+      unless request.configuration && request.configuration.return_immediately do
+        spawn(fn ->
+          Process.sleep(20)
+
+          A2A.TaskStore.ETS.update_task(ctx.store, task.id, fn stored ->
+            %{stored | status: %A2A.Types.TaskStatus{state: :completed}}
+          end)
+        end)
+      end
+
+      {:ok, task}
+    end
+  end
+
   test "generates context id and stores task" do
     table = new_store()
     opts = %{executor: StubExecutor, task_store: {A2A.TaskStore.ETS, table}}
@@ -221,8 +243,50 @@ defmodule A2A.TaskStoreExecutorTest do
 
     {:ok, task} = A2A.Server.TaskStoreExecutor.handle_send_message(opts, request, %{})
 
-    assert [%A2A.Types.Message{message_id: "m1"}, %A2A.Types.Message{message_id: "m2"}] =
+    assert [%A2A.Types.Message{message_id: "m3"}, %A2A.Types.Message{message_id: "msg-1"}] =
              task.history
+  end
+
+  test "v1 send waits for completion when return_immediately is false" do
+    table = new_store()
+
+    opts = %{
+      executor: AsyncCompletionExecutor,
+      task_store: {A2A.TaskStore.ETS, table},
+      wait_poll_interval: 1
+    }
+
+    request = %A2A.Types.SendMessageRequest{
+      message: %A2A.Types.Message{message_id: "msg-1", role: :user, parts: []},
+      configuration: %A2A.Types.SendMessageConfiguration{return_immediately: false}
+    }
+
+    assert {:ok, %A2A.Types.Task{status: %{state: :completed}}} =
+             A2A.Server.TaskStoreExecutor.handle_send_message(opts, request, %{
+               protocol_version: :v1_0,
+               store: table
+             })
+  end
+
+  test "v1 send returns working task immediately when requested" do
+    table = new_store()
+
+    opts = %{
+      executor: AsyncCompletionExecutor,
+      task_store: {A2A.TaskStore.ETS, table},
+      wait_poll_interval: 1
+    }
+
+    request = %A2A.Types.SendMessageRequest{
+      message: %A2A.Types.Message{message_id: "msg-1", role: :user, parts: []},
+      configuration: %A2A.Types.SendMessageConfiguration{return_immediately: true}
+    }
+
+    assert {:ok, %A2A.Types.Task{status: %{state: :submitted}}} =
+             A2A.Server.TaskStoreExecutor.handle_send_message(opts, request, %{
+               protocol_version: :v1_0,
+               store: table
+             })
   end
 
   test "applies latest status update to stored task" do

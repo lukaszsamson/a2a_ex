@@ -12,10 +12,10 @@ defmodule A2A.MessageTest do
     assert v0_map["role"] == "user"
     assert v0_map["parts"] == [%{"text" => "Hello", "kind" => "text"}]
 
-    latest_map = A2A.Types.Message.to_map(message, version: :latest)
-    assert latest_map["role"] == "ROLE_USER"
-    assert latest_map["content"] == [%{"text" => "Hello"}]
-    refute Map.has_key?(latest_map, "parts")
+    v1_map = A2A.Types.Message.to_map(message, version: :v1_0)
+    assert v1_map["role"] == "ROLE_USER"
+    assert v1_map["parts"] == [%{"text" => "Hello"}]
+    refute Map.has_key?(v1_map, "content")
 
     decoded = A2A.Types.Message.from_map(v0_map, version: :v0_3)
     assert decoded.role == :user

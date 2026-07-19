@@ -51,7 +51,7 @@ defmodule A2A.ServerRESTPlugTest do
                           executor: SlowRequestExecutor,
                           request_timeout: 10
                         )
-  @latest_opts A2A.Server.REST.Plug.init(executor: A2A.TestExecutor, version: :latest)
+  @v1_opts A2A.Server.REST.Plug.init(executor: A2A.TestExecutor, version: :v1_0)
   @proto_opts A2A.Server.REST.Plug.init(executor: A2A.TestExecutor, wire_format: :proto_json)
   @proto_message_opts A2A.Server.REST.Plug.init(
                         executor: ProtoMessageExecutor,
@@ -61,14 +61,14 @@ defmodule A2A.ServerRESTPlugTest do
                executor: A2A.TestExecutor,
                capabilities: %{push_notifications: true}
              )
-  @push_latest_opts A2A.Server.REST.Plug.init(
-                      executor: A2A.TestExecutor,
-                      version: :latest,
-                      capabilities: %{push_notifications: true}
-                    )
+  @push_v1_opts A2A.Server.REST.Plug.init(
+                  executor: A2A.TestExecutor,
+                  version: :v1_0,
+                  capabilities: %{push_notifications: true}
+                )
   @extended_opts A2A.Server.REST.Plug.init(
                    executor: A2A.TestExecutor,
-                   version: :latest,
+                   version: :v1_0,
                    capabilities: %{extended_agent_card: true}
                  )
   @subscribe_get_opts A2A.Server.REST.Plug.init(
@@ -192,6 +192,40 @@ defmodule A2A.ServerRESTPlugTest do
     assert response["error"]["message"] == "Request too large"
   end
 
+  test "uses canonical v1 status for malformed request bodies" do
+    conn =
+      conn("POST", "/message:send", "not-json")
+      |> put_req_header("content-type", "application/a2a+json")
+      |> put_req_header("a2a-version", "1.0")
+      |> A2A.Server.REST.Plug.call(@v1_opts)
+
+    assert conn.status == 400
+    response = Jason.decode!(conn.resp_body)
+    assert [%{"reason" => "INVALID_PARAMS"}] = response["error"]["details"]
+  end
+
+  test "rejects conflicting path and body tenants" do
+    payload = %{
+      "tenant" => "tenant-b",
+      "message" => %{
+        "messageId" => "msg-1",
+        "role" => "ROLE_USER",
+        "parts" => [%{"text" => "hello"}]
+      }
+    }
+
+    conn =
+      conn("POST", "/tenant-a/message:send", Jason.encode!(payload))
+      |> put_req_header("content-type", "application/a2a+json")
+      |> put_req_header("a2a-version", "1.0")
+      |> A2A.Server.REST.Plug.call(@v1_opts)
+
+    assert conn.status == 400
+    response = Jason.decode!(conn.resp_body)
+    assert response["error"]["message"] =~ "does not match path tenant"
+    assert [%{"reason" => "INVALID_PARAMS"}] = response["error"]["details"]
+  end
+
   test "handles get task" do
     conn = conn("GET", "/v1/tasks/task-123") |> A2A.Server.REST.Plug.call(@opts)
 
@@ -224,11 +258,12 @@ defmodule A2A.ServerRESTPlugTest do
     conn =
       conn("GET", "/tasks/task-123")
       |> put_req_header("a2a-version", "9.9")
-      |> A2A.Server.REST.Plug.call(@latest_opts)
+      |> A2A.Server.REST.Plug.call(@v1_opts)
 
-    assert conn.status == 426
+    assert conn.status == 400
+    assert get_resp_header(conn, "content-type") == ["application/a2a+json; charset=utf-8"]
     body = Jason.decode!(conn.resp_body)
-    assert body["error"]["type"] == "VersionNotSupportedError"
+    assert [%{"reason" => "VERSION_NOT_SUPPORTED"}] = body["error"]["details"]
   end
 
   test "handles push notification config list" do
@@ -241,18 +276,23 @@ defmodule A2A.ServerRESTPlugTest do
     assert [%{"id" => "cfg-1"}] = body
   end
 
-  test "handles latest push notification config list with configs wrapper" do
+  test "handles v1.0 push notification config list with configs wrapper" do
     conn =
       conn("GET", "/tasks/task-1/pushNotificationConfigs")
-      |> A2A.Server.REST.Plug.call(@push_latest_opts)
+      |> put_req_header("a2a-version", "1.0")
+      |> A2A.Server.REST.Plug.call(@push_v1_opts)
 
     assert conn.status == 200
+    assert get_resp_header(conn, "content-type") == ["application/a2a+json; charset=utf-8"]
     body = Jason.decode!(conn.resp_body)
     assert [%{"id" => "cfg-1"}] = body["configs"]
   end
 
   test "handles extended agent card" do
-    conn = conn("GET", "/extendedAgentCard") |> A2A.Server.REST.Plug.call(@extended_opts)
+    conn =
+      conn("GET", "/extendedAgentCard")
+      |> put_req_header("a2a-version", "1.0")
+      |> A2A.Server.REST.Plug.call(@extended_opts)
 
     assert conn.status == 200
     body = Jason.decode!(conn.resp_body)

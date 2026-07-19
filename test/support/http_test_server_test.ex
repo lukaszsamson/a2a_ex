@@ -467,11 +467,17 @@ defmodule A2A.TestLatestAgentCardPlug do
     case conn.request_path do
       "/.well-known/agent-card.json" ->
         send_json(conn, %{
-          "name" => "latest-demo",
+          "name" => "v1-demo",
+          "description" => "A v1.0 test agent",
+          "version" => "1.0.0",
           "capabilities" => %{"streaming" => true},
+          "defaultInputModes" => ["text/plain"],
+          "defaultOutputModes" => ["text/plain"],
+          "skills" => [],
           "supportedInterfaces" => [
             %{
               "protocolBinding" => "JSONRPC",
+              "protocolVersion" => "1.0",
               "url" => "https://rpc.example.com"
             }
           ]
@@ -494,8 +500,13 @@ defmodule A2A.TestInvalidLatestAgentCardPlug do
     case conn.request_path do
       "/.well-known/agent-card.json" ->
         send_json(conn, %{
-          "name" => "latest-demo",
+          "name" => "v1-demo",
+          "description" => "Invalid v1.0 agent",
+          "version" => "1.0.0",
           "capabilities" => %{"streaming" => true},
+          "defaultInputModes" => ["text/plain"],
+          "defaultOutputModes" => ["text/plain"],
+          "skills" => [],
           "supportedInterfaces" => [%{"protocolBinding" => "JSONRPC"}]
         })
 
