@@ -137,6 +137,19 @@ defmodule A2A.ClientConfigTest do
     assert proto.wire_format == :proto_json
   end
 
+  test "supports explicit cancel metadata with the legacy metadata alias" do
+    alias_config = A2A.Client.Config.new("https://example.com", metadata: %{"source" => "alias"})
+
+    explicit_config =
+      A2A.Client.Config.new("https://example.com",
+        metadata: %{"source" => "alias"},
+        cancel_metadata: %{"source" => "explicit"}
+      )
+
+    assert alias_config.cancel_metadata == %{"source" => "alias"}
+    assert explicit_config.cancel_metadata == %{"source" => "explicit"}
+  end
+
   test "allows per-request extensions override" do
     config = A2A.Client.Config.new("https://example.com")
 

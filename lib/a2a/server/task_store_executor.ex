@@ -1,7 +1,14 @@
 defmodule A2A.Server.TaskStoreExecutor do
   @moduledoc """
   Wraps executor callbacks to persist tasks in a task store.
+
+  Completion polling for v1 requests uses `:wait_poll_interval` (25 ms by default) and is
+  bounded by `:wait_timeout` (30 seconds by default). Set `:wait_timeout` to `:infinity` only
+  when an outer request timeout provides the desired bound.
   """
+
+  @default_wait_timeout 30_000
+  @default_wait_poll_interval 25
 
   @spec handle_send_message(map() | keyword(), A2A.Types.SendMessageRequest.t(), map()) ::
           {:ok, A2A.Types.Task.t() | A2A.Types.Message.t()} | {:error, A2A.Error.t()}
@@ -66,7 +73,7 @@ defmodule A2A.Server.TaskStoreExecutor do
 
       {:error, :not_found} ->
         delegate(opts, :handle_get_task, [task_id, query, ctx])
-        |> normalize_not_found()
+        |> normalize_not_found(task_id)
 
       {:error, error} ->
         {:error, error}
@@ -129,7 +136,7 @@ defmodule A2A.Server.TaskStoreExecutor do
 
       {:error, :not_found} ->
         delegate(opts, :handle_cancel_task, [task_id, ctx])
-        |> normalize_not_found()
+        |> normalize_not_found(task_id)
 
       {:error, error} ->
         {:error, error}
@@ -324,13 +331,27 @@ defmodule A2A.Server.TaskStoreExecutor do
   defp maybe_wait_for_completion(_opts, _request, _ctx, response), do: {:ok, response}
 
   defp wait_for_completion(opts, task_id) do
+    timeout = wait_timeout(opts)
+    deadline = deadline(timeout)
+    wait_for_completion(opts, task_id, timeout, deadline)
+  end
+
+  defp wait_for_completion(opts, task_id, timeout, deadline) do
+    if deadline_reached?(deadline) do
+      wait_timeout_error(task_id, timeout)
+    else
+      poll_for_completion(opts, task_id, timeout, deadline)
+    end
+  end
+
+  defp poll_for_completion(opts, task_id, timeout, deadline) do
     case get_task(opts, task_id) do
       {:ok, %A2A.Types.Task{} = task} ->
         if returnable_state?(task.status && task.status.state) do
           {:ok, task}
         else
-          Process.sleep(fetch_opt(opts, :wait_poll_interval) || 25)
-          wait_for_completion(opts, task_id)
+          Process.sleep(wait_poll_interval(opts, deadline))
+          wait_for_completion(opts, task_id, timeout, deadline)
         end
 
       {:error, :not_found} ->
@@ -342,6 +363,43 @@ defmodule A2A.Server.TaskStoreExecutor do
       {:error, error} ->
         {:error, A2A.Error.new(:invalid_agent_response, inspect(error))}
     end
+  end
+
+  defp wait_timeout(opts) do
+    case fetch_opt(opts, :wait_timeout) do
+      :infinity -> :infinity
+      timeout when is_integer(timeout) and timeout >= 0 -> timeout
+      _ -> @default_wait_timeout
+    end
+  end
+
+  defp wait_poll_interval(opts, deadline) do
+    interval =
+      case fetch_opt(opts, :wait_poll_interval) do
+        interval when is_integer(interval) and interval > 0 -> interval
+        _ -> @default_wait_poll_interval
+      end
+
+    case deadline do
+      :infinity -> interval
+      deadline -> min(interval, max(deadline - now_ms(), 0))
+    end
+  end
+
+  defp deadline(:infinity), do: :infinity
+  defp deadline(timeout), do: now_ms() + timeout
+
+  defp deadline_reached?(:infinity), do: false
+  defp deadline_reached?(deadline), do: now_ms() >= deadline
+
+  defp now_ms, do: System.monotonic_time(:millisecond)
+
+  defp wait_timeout_error(task_id, timeout) do
+    {:error,
+     A2A.Error.new(:request_timeout, "Timed out waiting for task completion",
+       data: %{taskId: task_id, timeoutMs: timeout},
+       retryable?: true
+     )}
   end
 
   defp returnable_state?(state),
@@ -447,11 +505,11 @@ defmodule A2A.Server.TaskStoreExecutor do
     end
   end
 
-  defp normalize_not_found({:error, :not_found}) do
-    {:error, A2A.Error.new(:task_not_found, "Task not found")}
+  defp normalize_not_found({:error, :not_found}, task_id) do
+    {:error, A2A.Error.new(:task_not_found, "Task not found", data: %{taskId: task_id})}
   end
 
-  defp normalize_not_found(result), do: result
+  defp normalize_not_found(result, _task_id), do: result
 
   defp validate_push_config(opts, config) do
     allow_http = fetch_opt(opts, :allow_http) || false

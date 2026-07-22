@@ -24,6 +24,7 @@ defmodule A2A.TaskStoreExecutorTest do
 
   defmodule NotFoundExecutor do
     def handle_get_task(_task_id, _query, _ctx), do: {:error, :not_found}
+    def handle_cancel_task(_task_id, _ctx), do: {:error, :not_found}
   end
 
   defmodule PushConfigExecutor do
@@ -169,8 +170,11 @@ defmodule A2A.TaskStoreExecutorTest do
     table = new_store()
     opts = %{executor: NotFoundExecutor, task_store: {A2A.TaskStore.ETS, table}}
 
-    assert {:error, %A2A.Error{type: :task_not_found}} =
+    assert {:error, %A2A.Error{type: :task_not_found, data: %{taskId: "missing"}}} =
              A2A.Server.TaskStoreExecutor.handle_get_task(opts, "missing", %{}, %{})
+
+    assert {:error, %A2A.Error{type: :task_not_found, data: %{taskId: "missing"}}} =
+             A2A.Server.TaskStoreExecutor.handle_cancel_task(opts, "missing", %{})
   end
 
   test "rejects insecure push notification config" do
@@ -286,6 +290,32 @@ defmodule A2A.TaskStoreExecutorTest do
              A2A.Server.TaskStoreExecutor.handle_send_message(opts, request, %{
                protocol_version: :v1_0,
                store: table
+             })
+  end
+
+  test "v1 send returns a deterministic error when completion waiting times out" do
+    table = new_store()
+
+    opts = %{
+      executor: StubExecutor,
+      task_store: {A2A.TaskStore.ETS, table},
+      wait_poll_interval: 1,
+      wait_timeout: 5
+    }
+
+    request = %A2A.Types.SendMessageRequest{
+      message: %A2A.Types.Message{message_id: "msg-1", role: :user, parts: []},
+      configuration: %A2A.Types.SendMessageConfiguration{return_immediately: false}
+    }
+
+    assert {:error,
+            %A2A.Error{
+              type: :request_timeout,
+              data: %{taskId: "task-1", timeoutMs: 5},
+              retryable?: true
+            }} =
+             A2A.Server.TaskStoreExecutor.handle_send_message(opts, request, %{
+               protocol_version: :v1_0
              })
   end
 

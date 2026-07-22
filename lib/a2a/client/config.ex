@@ -1,6 +1,9 @@
 defmodule A2A.Client.Config do
   @moduledoc """
   Client configuration for transport requests.
+
+  Use `:cancel_metadata` for cancel-task metadata. The older `:metadata` option remains an alias;
+  when both are present, `:cancel_metadata` takes precedence.
   """
 
   defstruct [
@@ -48,7 +51,7 @@ defmodule A2A.Client.Config do
       req_options: Keyword.get(opts, :req_options, []),
       transport_opts: Keyword.get(opts, :transport_opts, []),
       tenant: Keyword.get(opts, :tenant),
-      cancel_metadata: Keyword.get(opts, :metadata)
+      cancel_metadata: Keyword.get(opts, :cancel_metadata, Keyword.get(opts, :metadata))
     }
   end
 
