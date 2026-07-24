@@ -1,7 +1,7 @@
 defmodule A2A.ClientSelectionMatrixTest do
   use ExUnit.Case, async: true
 
-  test "binding matching is case-sensitive and falls back to default interface" do
+  test "binding matching is case-sensitive and does not silently negotiate another binding" do
     card = %A2A.Types.AgentCard{
       name: "demo",
       supported_interfaces: [
@@ -11,8 +11,65 @@ defmodule A2A.ClientSelectionMatrixTest do
 
     interface = A2A.Client.select_interface(card, protocol_binding: "http+json")
 
-    assert interface.protocol_binding == "HTTP+JSON"
-    assert interface.url == "https://rest.example.com"
+    assert interface == nil
+  end
+
+  test "does not negotiate a future protocol minor as v1.0" do
+    card = %A2A.Types.AgentCard{
+      name: "demo",
+      supported_interfaces: [
+        %A2A.Types.AgentInterface{
+          protocol_binding: "HTTP+JSON",
+          protocol_version: "1.1",
+          url: "https://future.example.com"
+        }
+      ]
+    }
+
+    assert A2A.Client.select_interface(card, version: :v1_0) == nil
+
+    assert_raise ArgumentError, fn ->
+      A2A.Client.Config.from_agent_card(card, version: :v1_0)
+    end
+  end
+
+  test "does not automatically negotiate a future protocol minor" do
+    card = %A2A.Types.AgentCard{
+      name: "demo",
+      supported_interfaces: [
+        %A2A.Types.AgentInterface{
+          protocol_binding: "HTTP+JSON",
+          protocol_version: "1.1",
+          url: "https://future.example.com"
+        }
+      ]
+    }
+
+    assert A2A.Client.select_interface(card) == nil
+    assert_raise ArgumentError, fn -> A2A.Client.Config.from_agent_card(card) end
+  end
+
+  test "skips a future interface and selects the first supported version" do
+    card = %A2A.Types.AgentCard{
+      name: "demo",
+      supported_interfaces: [
+        %A2A.Types.AgentInterface{
+          protocol_binding: "HTTP+JSON",
+          protocol_version: "1.1",
+          url: "https://future.example.com"
+        },
+        %A2A.Types.AgentInterface{
+          protocol_binding: "JSONRPC",
+          protocol_version: "1.0",
+          url: "https://v1.example.com"
+        }
+      ]
+    }
+
+    config = A2A.Client.Config.from_agent_card(card)
+    assert config.version == :v1_0
+    assert config.base_url == "https://v1.example.com"
+    assert config.transport == A2A.Transport.JSONRPC
   end
 
   test "prefers first interface when duplicate bindings are present" do

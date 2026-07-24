@@ -12,9 +12,8 @@ defmodule A2A.Server.Headers do
 
   @spec version(Plug.Conn.t()) :: String.t() | nil
   def version(conn) do
-    conn
-    |> header_values(["a2a-version"])
-    |> List.first()
+    header = conn |> header_values(["a2a-version"]) |> List.first()
+    header || query_version(conn)
   end
 
   @spec request_id(Plug.Conn.t()) :: String.t()
@@ -37,18 +36,21 @@ defmodule A2A.Server.Headers do
 
   @spec validate_version(Plug.Conn.t(), A2A.Types.version()) :: :ok | {:error, A2A.Error.t()}
   def validate_version(conn, version) do
-    case {version, version(conn)} do
-      {:latest, nil} ->
+    case {A2A.Types.normalize_version(version), version(conn)} do
+      {:v1_0, "1.0"} ->
         :ok
 
-      {:latest, value} when value in ["0.3", "0.3.0"] ->
+      {:v1_0, value} ->
+        {:error,
+         A2A.Error.new(:version_not_supported, "Unsupported version #{value || "0.3"}",
+           data: %{"supportedVersions" => ["1.0"]}
+         )}
+
+      {:v0_3, value} when value in [nil, "0.3", "0.3.0"] ->
         :ok
 
-      {:latest, value} ->
+      {:v0_3, value} ->
         {:error, A2A.Error.new(:version_not_supported, "Unsupported version #{value}")}
-
-      _ ->
-        :ok
     end
   end
 
@@ -62,5 +64,11 @@ defmodule A2A.Server.Headers do
 
   defp header_values(conn, keys) do
     Enum.flat_map(keys, &Plug.Conn.get_req_header(conn, &1))
+  end
+
+  defp query_version(%Plug.Conn{query_params: %Plug.Conn.Unfetched{}}), do: nil
+
+  defp query_version(conn) do
+    conn.query_params["A2A-Version"] || conn.query_params["a2a-version"]
   end
 end

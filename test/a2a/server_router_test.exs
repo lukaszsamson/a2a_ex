@@ -26,14 +26,14 @@ defmodule A2A.Server.RouterTest do
     rest("/api", executor: A2A.TestExecutor, base_path: "/v1")
   end
 
-  defmodule LatestRouter do
+  defmodule V1Router do
     use Plug.Router
     import A2A.Server.Router
 
     plug(:match)
     plug(:dispatch)
 
-    jsonrpc("/rpc-latest", executor: A2A.TestExecutor, version: :latest)
+    jsonrpc("/rpc-v1", executor: A2A.TestExecutor, version: :v1_0)
   end
 
   defmodule RequiredExtRouter do
@@ -156,7 +156,7 @@ defmodule A2A.Server.RouterTest do
   test "jsonrpc helper forwards init_opts" do
     payload = jsonrpc_payload(2, "SendMessage", "ROLE_USER")
 
-    conn = request_conn("/rpc-latest", payload, LatestRouter)
+    conn = request_conn("/rpc-v1", payload, V1Router, [{"a2a-version", "1.0"}])
 
     assert conn.status == 200
     body = decode_body(conn)

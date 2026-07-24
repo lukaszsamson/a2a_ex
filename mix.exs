@@ -5,7 +5,7 @@ defmodule A2aEx.MixProject do
     [
       app: :a2a_ex,
       version: "0.1.1",
-      elixir: "~> 1.15",
+      elixir: "~> 1.16",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       description: "Elixir client and server library for the Agent2Agent protocol.",
@@ -19,7 +19,7 @@ defmodule A2aEx.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:crypto, :logger]
     ]
   end
 

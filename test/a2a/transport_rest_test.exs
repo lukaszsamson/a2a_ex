@@ -58,6 +58,35 @@ defmodule A2A.TransportRESTTest do
     end
   end
 
+  defmodule V1MediaTypeCapturePlug do
+    import Plug.Conn
+
+    def init(opts), do: opts
+
+    def call(conn, opts) do
+      parent = Keyword.fetch!(opts, :parent)
+      {:ok, _body, conn} = read_body(conn)
+
+      send(parent, {
+        :v1_media_types,
+        get_req_header(conn, "content-type"),
+        get_req_header(conn, "accept")
+      })
+
+      response = %{
+        "message" => %{
+          "messageId" => "response-1",
+          "role" => "ROLE_AGENT",
+          "parts" => [%{"text" => "ok"}]
+        }
+      }
+
+      conn
+      |> put_resp_content_type("application/a2a+json")
+      |> send_resp(200, Jason.encode!(response))
+    end
+  end
+
   setup_all do
     server = A2A.TestHTTPServer.start(A2A.TestRESTSuccessPlug)
     on_exit(fn -> A2A.TestHTTPServer.stop(server.ref) end)
@@ -210,6 +239,30 @@ defmodule A2A.TransportRESTTest do
     refute Map.has_key?(payload["message"], "parts")
   end
 
+  test "v1 HTTP+JSON sends and accepts the A2A media type" do
+    server = A2A.TestHTTPServer.start(V1MediaTypeCapturePlug, plug_opts: [parent: self()])
+    on_exit(fn -> A2A.TestHTTPServer.stop(server.ref) end)
+
+    config =
+      A2A.Client.Config.new(server.base_url,
+        transport: A2A.Transport.REST,
+        version: :v1_0
+      )
+
+    request = %A2A.Types.SendMessageRequest{
+      message: %A2A.Types.Message{
+        message_id: "msg-1",
+        role: :user,
+        parts: [%A2A.Types.Part{text: "hello"}]
+      }
+    }
+
+    assert {:ok, %A2A.Types.Message{message_id: "response-1"}} =
+             A2A.Transport.REST.send_message(config, request)
+
+    assert_received {:v1_media_types, ["application/a2a+json"], ["application/a2a+json"]}
+  end
+
   test "list_tasks maps error response" do
     server = A2A.TestHTTPServer.start(A2A.TestRESTErrorPlug)
     on_exit(fn -> A2A.TestHTTPServer.stop(server.ref) end)
@@ -244,14 +297,14 @@ defmodule A2A.TransportRESTTest do
     assert payload["config"]["url"] == "https://example.com/webhook"
   end
 
-  test "uses /v1/card for v0.3 extended card and /extendedAgentCard for latest" do
+  test "uses /v1/card for v0.3 extended card and /extendedAgentCard for v1.0" do
     server = A2A.TestHTTPServer.start(CardPathCapturePlug, plug_opts: [parent: self()])
     on_exit(fn -> A2A.TestHTTPServer.stop(server.ref) end)
 
     v03 = A2A.Client.Config.new(server.base_url, transport: A2A.Transport.REST, version: :v0_3)
 
-    latest =
-      A2A.Client.Config.new(server.base_url, transport: A2A.Transport.REST, version: :latest)
+    v1 =
+      A2A.Client.Config.new(server.base_url, transport: A2A.Transport.REST, version: :v1_0)
 
     assert {:ok, %A2A.Types.AgentCard{name: "extended"}} =
              A2A.Transport.REST.get_extended_agent_card(v03)
@@ -259,7 +312,7 @@ defmodule A2A.TransportRESTTest do
     assert_received {:card_request_path, "/v1/card"}
 
     assert {:ok, %A2A.Types.AgentCard{name: "extended"}} =
-             A2A.Transport.REST.get_extended_agent_card(latest)
+             A2A.Transport.REST.get_extended_agent_card(v1)
 
     assert_received {:card_request_path, "/extendedAgentCard"}
   end

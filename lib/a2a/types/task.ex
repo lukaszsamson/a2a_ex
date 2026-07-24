@@ -84,7 +84,7 @@ defmodule A2A.Types.Artifact do
 
   defp maybe_put_kind(map, kind, opts) do
     case A2A.Types.version_from_opts(opts) do
-      :latest -> map
+      :v1_0 -> map
       _ -> A2A.Types.put_if(map, "kind", kind)
     end
   end
@@ -152,7 +152,7 @@ defmodule A2A.Types.Task do
 
   defp maybe_put_kind(map, kind, opts) do
     case A2A.Types.version_from_opts(opts) do
-      :latest -> map
+      :v1_0 -> map
       _ -> A2A.Types.put_if(map, "kind", kind)
     end
   end
@@ -186,7 +186,7 @@ defmodule A2A.Types.TaskStatusUpdateEvent do
     |> A2A.Types.put_if("taskId", event.task_id)
     |> A2A.Types.put_if("contextId", event.context_id)
     |> A2A.Types.put_if("status", encode_status(event.status, opts))
-    |> A2A.Types.put_if("final", event.final)
+    |> maybe_put_final(event.final, opts)
     |> A2A.Types.put_if("metadata", event.metadata)
     |> maybe_put_kind(event.kind || "status-update", opts)
     |> A2A.Types.merge_raw(event.raw)
@@ -199,9 +199,13 @@ defmodule A2A.Types.TaskStatusUpdateEvent do
 
   defp maybe_put_kind(map, kind, opts) do
     case A2A.Types.version_from_opts(opts) do
-      :latest -> map
+      :v1_0 -> map
       _ -> A2A.Types.put_if(map, "kind", kind)
     end
+  end
+
+  defp maybe_put_final(map, final, opts) do
+    if A2A.Types.v1?(opts), do: map, else: A2A.Types.put_if(map, "final", final)
   end
 end
 
@@ -257,7 +261,7 @@ defmodule A2A.Types.TaskArtifactUpdateEvent do
 
   defp maybe_put_kind(map, kind, opts) do
     case A2A.Types.version_from_opts(opts) do
-      :latest -> map
+      :v1_0 -> map
       _ -> A2A.Types.put_if(map, "kind", kind)
     end
   end

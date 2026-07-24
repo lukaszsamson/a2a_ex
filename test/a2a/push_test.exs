@@ -122,7 +122,7 @@ defmodule A2A.PushTest do
              A2A.Server.Push.deliver(config, %{}, sender: sender)
   end
 
-  test "encodes task payload for latest version" do
+  test "encodes task payload for v1.0" do
     config = %A2A.Types.PushNotificationConfig{
       url: "https://example.com/webhook"
     }
@@ -140,7 +140,7 @@ defmodule A2A.PushTest do
       {:ok, %{status: 200}}
     end
 
-    assert :ok == A2A.Server.Push.deliver(config, task, version: :latest, sender: sender)
+    assert :ok == A2A.Server.Push.deliver(config, task, version: :v1_0, sender: sender)
     assert_received {:push_request, opts}
     assert opts[:body] =~ "\"task\""
   end

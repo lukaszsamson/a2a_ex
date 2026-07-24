@@ -2,7 +2,7 @@ defmodule A2A.IntegrationJSONRPCVersionMismatchTest do
   use ExUnit.Case, async: false
 
   setup_all do
-    plug_opts = [executor: A2A.TestExecutor, version: :latest]
+    plug_opts = [executor: A2A.TestExecutor, version: :v1_0]
     server = A2A.TestHTTPServer.start(A2A.Server.JSONRPC.Plug, plug_opts: plug_opts)
     on_exit(fn -> A2A.TestHTTPServer.stop(server.ref) end)
     {:ok, base_url: server.base_url}
@@ -14,7 +14,7 @@ defmodule A2A.IntegrationJSONRPCVersionMismatchTest do
         base_url,
         [message: %A2A.Types.Message{message_id: "msg-1", role: :user, parts: []}],
         transport: A2A.Transport.JSONRPC,
-        version: :latest,
+        version: :v1_0,
         headers: [{"a2a-version", "9.9"}],
         req_options: [retry: false]
       )

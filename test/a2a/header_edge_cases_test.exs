@@ -41,16 +41,26 @@ defmodule A2A.HeaderEdgeCasesTest do
 
   test "accepts a2a-version 0.3 and 0.3.0" do
     conn = conn(:get, "/") |> put_req_header("a2a-version", "0.3")
-    assert :ok = A2A.Server.Headers.validate_version(conn, :latest)
+    assert :ok = A2A.Server.Headers.validate_version(conn, :v0_3)
 
     conn = conn(:get, "/") |> put_req_header("a2a-version", "0.3.0")
-    assert :ok = A2A.Server.Headers.validate_version(conn, :latest)
+    assert :ok = A2A.Server.Headers.validate_version(conn, :v0_3)
   end
 
   test "rejects a2a-version with unsupported patch" do
     conn = conn(:get, "/") |> put_req_header("a2a-version", "0.3.1")
 
     assert {:error, %A2A.Error{type: :version_not_supported}} =
-             A2A.Server.Headers.validate_version(conn, :latest)
+             A2A.Server.Headers.validate_version(conn, :v0_3)
+  end
+
+  test "v1.0 requires the 1.0 conformance identity" do
+    conn = conn(:get, "/") |> put_req_header("a2a-version", "1.0")
+    assert :ok = A2A.Server.Headers.validate_version(conn, :v1_0)
+
+    missing = conn(:get, "/")
+
+    assert {:error, %A2A.Error{type: :version_not_supported}} =
+             A2A.Server.Headers.validate_version(missing, :v1_0)
   end
 end

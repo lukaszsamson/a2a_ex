@@ -1,0 +1,27 @@
+{
+  "tenant": "acme",
+  "message": {
+    "messageId": "msg-schema-1",
+    "contextId": "ctx-schema-1",
+    "role": "ROLE_USER",
+    "parts": [
+      {"text": "hello", "mediaType": "text/plain"},
+      {"raw": "aGVsbG8=", "filename": "hello.txt", "mediaType": "text/plain"},
+      {"url": "https://example.com/input.json", "mediaType": "application/json"},
+      {"data": {"answer": 42}, "metadata": {"source": "fixture"}}
+    ],
+    "extensions": ["urn:example:citations"],
+    "referenceTaskIds": ["task-previous"]
+  },
+  "configuration": {
+    "acceptedOutputModes": ["text/plain"],
+    "taskPushNotificationConfig": {
+      "url": "https://client.example.com/webhook",
+      "token": "opaque",
+      "authentication": {"scheme": "Bearer", "credentials": "secret"}
+    },
+    "historyLength": 2,
+    "returnImmediately": true
+  },
+  "metadata": {"traceId": "trace-1"}
+}

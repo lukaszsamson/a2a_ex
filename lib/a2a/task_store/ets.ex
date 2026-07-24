@@ -53,6 +53,7 @@ defmodule A2A.TaskStore.ETS do
       |> Enum.map(fn {_id, task} -> task end)
       |> filter_tasks(opts)
       |> sort_tasks()
+      |> maybe_limit_history(opts)
       |> maybe_strip_artifacts(opts)
 
     total_size = length(tasks)
@@ -141,7 +142,10 @@ defmodule A2A.TaskStore.ETS do
   defp match_status?(_task, _opts), do: true
 
   defp updated_after?(%A2A.Types.Task{status: %A2A.Types.TaskStatus{timestamp: timestamp}}, opts) do
-    case get_opt(opts, "updatedAfter", :updated_after) do
+    status_timestamp_after = get_opt(opts, "statusTimestampAfter", :status_timestamp_after)
+    value = status_timestamp_after || get_opt(opts, "updatedAfter", :updated_after)
+
+    case value do
       nil ->
         true
 
@@ -153,9 +157,15 @@ defmodule A2A.TaskStore.ETS do
           end
 
         case {updated_after, timestamp} do
-          {nil, _} -> true
-          {_, nil} -> false
-          {after_dt, ts} -> DateTime.compare(ts, after_dt) == :gt
+          {nil, _} ->
+            true
+
+          {_, nil} ->
+            false
+
+          {after_dt, ts} ->
+            comparison = DateTime.compare(ts, after_dt)
+            comparison == :gt or (status_timestamp_after != nil and comparison == :eq)
         end
     end
   end
@@ -181,7 +191,7 @@ defmodule A2A.TaskStore.ETS do
   defp maybe_strip_artifacts(tasks, opts) do
     include =
       case get_opt(opts, "includeArtifacts", :include_artifacts) do
-        nil -> true
+        nil -> get_opt(opts, "protocolVersion", :protocol_version) != :v1_0
         value when is_boolean(value) -> value
         value when value in ["true", "1"] -> true
         _ -> false
@@ -194,8 +204,32 @@ defmodule A2A.TaskStore.ETS do
     end
   end
 
+  defp maybe_limit_history(tasks, opts) do
+    case parse_int(get_opt(opts, "historyLength", :history_length)) do
+      nil ->
+        tasks
+
+      length when length >= 0 ->
+        Enum.map(tasks, fn task ->
+          history = if length == 0, do: [], else: Enum.take(task.history || [], -length)
+          %{task | history: history}
+        end)
+
+      _ ->
+        tasks
+    end
+  end
+
   defp paginate(tasks, opts) do
-    page_size = parse_int(get_opt(opts, "pageSize", :page_size))
+    requested_page_size = parse_int(get_opt(opts, "pageSize", :page_size))
+
+    page_size =
+      if get_opt(opts, "protocolVersion", :protocol_version) == :v1_0 do
+        min(requested_page_size || 50, 100)
+      else
+        requested_page_size
+      end
+
     page_token = get_opt(opts, "pageToken", :page_token)
 
     tasks = apply_page_token(tasks, page_token)

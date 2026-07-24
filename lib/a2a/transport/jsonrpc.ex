@@ -15,9 +15,9 @@ defmodule A2A.Transport.JSONRPC do
     call(
       config,
       :send_message,
-      A2A.Types.SendMessageRequest.to_map(request, version: config.version),
+      A2A.Types.SendMessageRequest.to_map(request, type_opts(config)),
       fn result ->
-        response = A2A.Types.SendMessageResponse.from_map(result, version: config.version)
+        response = A2A.Types.SendMessageResponse.from_map(result, type_opts(config))
         {:ok, response.task || response.message}
       end
     )
@@ -29,15 +29,17 @@ defmodule A2A.Transport.JSONRPC do
     stream_request(
       config,
       :stream_message,
-      A2A.Types.SendMessageRequest.to_map(request, version: config.version)
+      A2A.Types.SendMessageRequest.to_map(request, type_opts(config))
     )
   end
 
   @spec get_task(A2A.Client.Config.t(), String.t(), keyword() | map()) ::
           {:ok, A2A.Types.Task.t()} | {:error, A2A.Error.t()}
-  def get_task(%A2A.Client.Config{} = config, task_id, _opts) do
-    call(config, :get_task, task_id_params(config, task_id), fn result ->
-      {:ok, A2A.Types.Task.from_map(result, version: config.version)}
+  def get_task(%A2A.Client.Config{} = config, task_id, opts) do
+    params = task_id_params(config, task_id) |> maybe_put_history_length(opts)
+
+    call(config, :get_task, params, fn result ->
+      {:ok, A2A.Types.Task.from_map(result, type_opts(config))}
     end)
   end
 
@@ -47,9 +49,9 @@ defmodule A2A.Transport.JSONRPC do
     call(
       config,
       :list_tasks,
-      A2A.Types.ListTasksRequest.to_map(request, version: config.version),
+      A2A.Types.ListTasksRequest.to_map(request, type_opts(config)),
       fn result ->
-        {:ok, A2A.Types.ListTasksResponse.from_map(result, version: config.version)}
+        {:ok, A2A.Types.ListTasksResponse.from_map(result, type_opts(config))}
       end
     )
   end
@@ -57,8 +59,12 @@ defmodule A2A.Transport.JSONRPC do
   @spec cancel_task(A2A.Client.Config.t(), String.t()) ::
           {:ok, A2A.Types.Task.t()} | {:error, A2A.Error.t()}
   def cancel_task(%A2A.Client.Config{} = config, task_id) do
-    call(config, :cancel_task, task_id_params(config, task_id), fn result ->
-      {:ok, A2A.Types.Task.from_map(result, version: config.version)}
+    params =
+      task_id_params(config, task_id)
+      |> A2A.Types.put_if("metadata", config.cancel_metadata)
+
+    call(config, :cancel_task, params, fn result ->
+      {:ok, A2A.Types.Task.from_map(result, type_opts(config))}
     end)
   end
 
@@ -159,7 +165,11 @@ defmodule A2A.Transport.JSONRPC do
     params = push_config_list_params(config, task_id, query)
 
     call(config, :push_notification_config_list, params, fn result ->
-      {:ok, decode_push_config_list(result)}
+      if config.version == :v1_0 do
+        {:ok, A2A.Types.ListTaskPushNotificationConfigsResponse.from_map(result)}
+      else
+        {:ok, decode_push_config_list(result)}
+      end
     end)
   end
 
@@ -176,8 +186,8 @@ defmodule A2A.Transport.JSONRPC do
   @spec get_extended_agent_card(A2A.Client.Config.t()) ::
           {:ok, A2A.Types.AgentCard.t()} | {:error, A2A.Error.t()}
   def get_extended_agent_card(%A2A.Client.Config{} = config) do
-    if config.version == :latest do
-      call(config, :get_extended_agent_card, %{}, fn result ->
+    if config.version == :v1_0 do
+      call(config, :get_extended_agent_card, tenant_params(config), fn result ->
         {:ok, A2A.Types.AgentCard.from_map(result)}
       end)
     else
@@ -278,7 +288,7 @@ defmodule A2A.Transport.JSONRPC do
 
   defp cancel_async(_), do: :ok
 
-  defp method_name(key, :latest) do
+  defp method_name(key, :v1_0) do
     case key do
       :send_message -> "SendMessage"
       :stream_message -> "SendStreamingMessage"
@@ -289,7 +299,7 @@ defmodule A2A.Transport.JSONRPC do
       :subscribe -> "SubscribeToTask"
       :push_notification_config_set -> "CreateTaskPushNotificationConfig"
       :push_notification_config_get -> "GetTaskPushNotificationConfig"
-      :push_notification_config_list -> "ListTaskPushNotificationConfig"
+      :push_notification_config_list -> "ListTaskPushNotificationConfigs"
       :push_notification_config_delete -> "DeleteTaskPushNotificationConfig"
       :get_extended_agent_card -> "GetExtendedAgentCard"
     end
@@ -343,7 +353,7 @@ defmodule A2A.Transport.JSONRPC do
   end
 
   defp decode_stream_payload(%{"result" => payload}, config) when is_map(payload) do
-    A2A.Types.StreamResponse.from_map(payload, version: config.version)
+    A2A.Types.StreamResponse.from_map(payload, type_opts(config))
   end
 
   defp decode_stream_payload(%{"error" => error}, _config) when is_map(error) do
@@ -386,20 +396,30 @@ defmodule A2A.Transport.JSONRPC do
     A2A.Types.PushNotificationConfig.from_map(config)
   end
 
-  defp task_id_params(%A2A.Client.Config{version: :latest}, task_id) do
-    %{"name" => "tasks/#{task_id}"}
+  defp task_id_params(%A2A.Client.Config{version: :v1_0} = config, task_id) do
+    Map.put(tenant_params(config), "id", task_id)
   end
 
   defp task_id_params(_config, task_id) do
     %{"name" => "tasks/#{task_id}", "id" => task_id}
   end
 
-  defp subscribe_task_params(%A2A.Client.Config{version: :latest}, task_id) do
-    %{"taskId" => task_id}
+  defp subscribe_task_params(%A2A.Client.Config{version: :v1_0} = config, task_id) do
+    Map.put(tenant_params(config), "id", task_id)
   end
 
   defp subscribe_task_params(_config, task_id) do
     %{"taskId" => task_id, "id" => task_id}
+  end
+
+  defp push_config_set_params(%A2A.Client.Config{version: :v1_0} = config, task_id, request) do
+    request = %{
+      request
+      | task_id: request.task_id || task_id,
+        tenant: request.tenant || config.tenant
+    }
+
+    A2A.Types.PushNotificationConfig.to_map(request, version: :v1_0)
   end
 
   defp push_config_set_params(config, task_id, request) do
@@ -412,6 +432,10 @@ defmodule A2A.Transport.JSONRPC do
     end
   end
 
+  defp push_config_get_params(%A2A.Client.Config{version: :v1_0} = config, task_id, config_id) do
+    tenant_params(config) |> Map.merge(%{"taskId" => task_id, "id" => config_id})
+  end
+
   defp push_config_get_params(config, task_id, config_id) do
     if js_sdk_push_compat?(config) do
       %{"id" => task_id, "pushNotificationConfigId" => config_id}
@@ -420,12 +444,20 @@ defmodule A2A.Transport.JSONRPC do
     end
   end
 
+  defp push_config_list_params(%A2A.Client.Config{version: :v1_0} = config, task_id, query) do
+    tenant_params(config) |> Map.merge(%{"taskId" => task_id}) |> Map.merge(Map.new(query))
+  end
+
   defp push_config_list_params(config, task_id, query) do
     if js_sdk_push_compat?(config) do
       Map.merge(%{"id" => task_id}, query)
     else
       Map.merge(%{"taskId" => task_id}, query)
     end
+  end
+
+  defp push_config_delete_params(%A2A.Client.Config{version: :v1_0} = config, task_id, config_id) do
+    tenant_params(config) |> Map.merge(%{"taskId" => task_id, "id" => config_id})
   end
 
   defp push_config_delete_params(config, task_id, config_id) do
@@ -445,6 +477,29 @@ defmodule A2A.Transport.JSONRPC do
   defp unique_id do
     System.unique_integer([:positive, :monotonic])
   end
+
+  defp type_opts(config), do: A2A.Protocol.type_opts(config.version, config.wire_format)
+
+  defp tenant_params(%A2A.Client.Config{tenant: tenant}) when is_binary(tenant) and tenant != "",
+    do: %{"tenant" => tenant}
+
+  defp tenant_params(_config), do: %{}
+
+  defp maybe_put_history_length(params, opts) when is_list(opts) do
+    case Keyword.get(opts, :history_length) do
+      nil -> params
+      value -> Map.put(params, "historyLength", value)
+    end
+  end
+
+  defp maybe_put_history_length(params, opts) when is_map(opts) do
+    case Map.get(opts, :history_length) || Map.get(opts, "historyLength") do
+      nil -> params
+      value -> Map.put(params, "historyLength", value)
+    end
+  end
+
+  defp maybe_put_history_length(params, _opts), do: params
 
   defp build_url(base, path) do
     URI.merge(base, path) |> to_string()

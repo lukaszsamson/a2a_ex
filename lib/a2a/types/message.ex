@@ -74,9 +74,39 @@ defmodule A2A.Types.Part do
   Part discriminator helpers.
   """
 
+  defstruct [:text, :raw, :url, :data, :metadata, :filename, :media_type, :extra]
+
+  @type t :: %__MODULE__{}
+
   @spec decode(map(), keyword()) ::
-          %A2A.Types.TextPart{} | %A2A.Types.FilePart{} | %A2A.Types.DataPart{}
-  def decode(map, _opts \\ []) do
+          t() | %A2A.Types.TextPart{} | %A2A.Types.FilePart{} | %A2A.Types.DataPart{}
+  def decode(map, opts \\ []) do
+    if A2A.Types.v1?(opts) do
+      %__MODULE__{
+        text: map["text"],
+        raw: map["raw"],
+        url: map["url"],
+        data: map["data"],
+        metadata: map["metadata"],
+        filename: map["filename"],
+        media_type: map["mediaType"],
+        extra:
+          A2A.Types.drop_raw(map, [
+            "text",
+            "raw",
+            "url",
+            "data",
+            "metadata",
+            "filename",
+            "mediaType"
+          ])
+      }
+    else
+      decode_v0_3(map)
+    end
+  end
+
+  defp decode_v0_3(map) do
     kind = map["kind"]
 
     cond do
@@ -94,6 +124,22 @@ defmodule A2A.Types.Part do
     end
   end
 
+  def encode(%__MODULE__{} = part, opts) do
+    if A2A.Types.v1?(opts) do
+      %{}
+      |> A2A.Types.put_if("text", part.text)
+      |> A2A.Types.put_if("raw", part.raw)
+      |> A2A.Types.put_if("url", part.url)
+      |> A2A.Types.put_if("data", part.data)
+      |> A2A.Types.put_if("metadata", part.metadata)
+      |> A2A.Types.put_if("filename", part.filename)
+      |> A2A.Types.put_if("mediaType", part.media_type)
+      |> A2A.Types.merge_raw(part.extra)
+    else
+      raise ArgumentError, "A2A.Types.Part is a v1.0 type"
+    end
+  end
+
   @spec encode(
           %A2A.Types.TextPart{} | %A2A.Types.FilePart{} | %A2A.Types.DataPart{},
           keyword()
@@ -107,6 +153,30 @@ defmodule A2A.Types.Part do
   end
 
   def encode(%A2A.Types.FilePart{} = part, opts) do
+    if A2A.Types.v1?(opts) do
+      %{}
+      |> A2A.Types.put_if("raw", part.file_with_bytes)
+      |> A2A.Types.put_if("url", part.file_with_uri)
+      |> A2A.Types.put_if("filename", part.name)
+      |> A2A.Types.put_if("mediaType", part.media_type)
+      |> A2A.Types.put_if("metadata", part.metadata)
+      |> A2A.Types.merge_raw(part.raw)
+    else
+      encode_v0_3_file(part, opts)
+    end
+  end
+
+  def encode(%A2A.Types.DataPart{} = part, opts) do
+    data = encode_data(part.data, opts)
+
+    %{}
+    |> A2A.Types.put_if("data", data)
+    |> A2A.Types.put_if("metadata", part.metadata)
+    |> maybe_put_kind(part.kind || "data", opts)
+    |> A2A.Types.merge_raw(part.raw)
+  end
+
+  defp encode_v0_3_file(part, opts) do
     media_type_key =
       case A2A.Types.wire_format_from_opts(opts) do
         :proto_json -> "mimeType"
@@ -123,16 +193,6 @@ defmodule A2A.Types.Part do
     |> A2A.Types.merge_raw(part.raw)
   end
 
-  def encode(%A2A.Types.DataPart{} = part, opts) do
-    data = encode_data(part.data, opts)
-
-    %{}
-    |> A2A.Types.put_if("data", data)
-    |> A2A.Types.put_if("metadata", part.metadata)
-    |> maybe_put_kind(part.kind || "data", opts)
-    |> A2A.Types.merge_raw(part.raw)
-  end
-
   defp encode_data(data, opts) do
     allow_non_object = Keyword.get(opts, :allow_non_object_data, false)
 
@@ -144,9 +204,10 @@ defmodule A2A.Types.Part do
   end
 
   defp maybe_put_kind(map, kind, opts) do
-    case A2A.Types.wire_format_from_opts(opts) do
-      :proto_json -> map
-      _ -> A2A.Types.put_if(map, "kind", kind)
+    cond do
+      A2A.Types.v1?(opts) -> map
+      A2A.Types.wire_format_from_opts(opts) == :proto_json -> map
+      true -> A2A.Types.put_if(map, "kind", kind)
     end
   end
 end
@@ -172,7 +233,7 @@ defmodule A2A.Types.Message do
   @type t :: %__MODULE__{}
 
   @spec from_map(map(), keyword()) :: %__MODULE__{}
-  def from_map(map, _opts \\ []) do
+  def from_map(map, opts \\ []) do
     parts = map["parts"] || map["content"]
 
     %__MODULE__{
@@ -181,7 +242,7 @@ defmodule A2A.Types.Message do
       context_id: map["contextId"],
       task_id: map["taskId"],
       reference_task_ids: map["referenceTaskIds"],
-      parts: decode_parts(parts),
+      parts: decode_parts(parts, opts),
       metadata: map["metadata"],
       extensions: map["extensions"],
       kind: map["kind"],
@@ -204,9 +265,10 @@ defmodule A2A.Types.Message do
   @spec to_map(%__MODULE__{}, keyword()) :: map()
   def to_map(%__MODULE__{} = message, opts \\ []) do
     parts_field =
-      case A2A.Types.wire_format_from_opts(opts) do
-        :proto_json -> "content"
-        _ -> "parts"
+      cond do
+        A2A.Types.v1?(opts) -> "parts"
+        A2A.Types.wire_format_from_opts(opts) == :proto_json -> "content"
+        true -> "parts"
       end
 
     %{}
@@ -222,8 +284,8 @@ defmodule A2A.Types.Message do
     |> A2A.Types.merge_raw(message.raw)
   end
 
-  defp decode_parts(nil), do: nil
-  defp decode_parts(list), do: Enum.map(list, &A2A.Types.Part.decode/1)
+  defp decode_parts(nil, _opts), do: nil
+  defp decode_parts(list, opts), do: Enum.map(list, &A2A.Types.Part.decode(&1, opts))
 
   defp encode_parts(nil, _opts), do: nil
   defp encode_parts(list, opts), do: Enum.map(list, &A2A.Types.Part.encode(&1, opts))
@@ -235,15 +297,15 @@ defmodule A2A.Types.Message do
   defp decode_role(role), do: role
 
   defp encode_role(role, opts) do
-    case A2A.Types.wire_format_from_opts(opts) do
-      :proto_json ->
+    cond do
+      A2A.Types.v1?(opts) or A2A.Types.wire_format_from_opts(opts) == :proto_json ->
         case role do
           :user -> "ROLE_USER"
           :agent -> "ROLE_AGENT"
           _ -> role
         end
 
-      _ ->
+      true ->
         case role do
           :user -> "user"
           :agent -> "agent"
@@ -253,9 +315,10 @@ defmodule A2A.Types.Message do
   end
 
   defp maybe_put_kind(map, kind, opts) do
-    case A2A.Types.wire_format_from_opts(opts) do
-      :proto_json -> map
-      _ -> A2A.Types.put_if(map, "kind", kind)
+    cond do
+      A2A.Types.v1?(opts) -> map
+      A2A.Types.wire_format_from_opts(opts) == :proto_json -> map
+      true -> A2A.Types.put_if(map, "kind", kind)
     end
   end
 end

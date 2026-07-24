@@ -11,7 +11,7 @@ defmodule A2A.Server.JSONRPC.Plug do
 
     %{
       executor: executor,
-      version: Keyword.get(opts, :version, :v0_3),
+      version: opts |> Keyword.get(:version, :v0_3) |> A2A.Types.normalize_version(),
       capabilities: Keyword.get(opts, :capabilities, %{}),
       required_extensions: Keyword.get(opts, :required_extensions, []),
       stream_timeout: Keyword.get(opts, :stream_timeout, :infinity),
@@ -22,6 +22,8 @@ defmodule A2A.Server.JSONRPC.Plug do
 
   @spec call(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def call(conn, opts) do
+    conn = assign(conn, :a2a_version, opts.version)
+    conn = fetch_query_params(conn)
     conn = A2A.Server.Headers.ensure_request_id(conn)
     extensions = A2A.Server.Headers.extensions(conn)
 
@@ -34,7 +36,7 @@ defmodule A2A.Server.JSONRPC.Plug do
       end)
     else
       {:error, error} ->
-        send_json(conn, 200, jsonrpc_error(-32000, A2A.Error.to_map(error)), extensions)
+        send_json(conn, 200, jsonrpc_a2a_error(error, nil, opts.version), extensions)
     end
   end
 
@@ -43,7 +45,7 @@ defmodule A2A.Server.JSONRPC.Plug do
       case streaming_method(body, opts.version, conn) do
         {:error, error} ->
           id = Map.get(body, "id")
-          send_json(conn, 200, jsonrpc_error(-32000, error, id), extensions)
+          send_json(conn, 200, jsonrpc_a2a_error(error, id, opts.version), extensions)
 
         nil ->
           case handle_request(body, opts, conn, extensions) do
@@ -62,7 +64,7 @@ defmodule A2A.Server.JSONRPC.Plug do
       end
     else
       {:error, %A2A.Error{} = error} ->
-        send_json(conn, 200, jsonrpc_error(-32000, A2A.Error.to_map(error)), extensions)
+        send_json(conn, 200, jsonrpc_a2a_error(error, nil, opts.version), extensions)
 
       {:error, error} when is_map(error) ->
         send_json(conn, 200, error, extensions)
@@ -82,7 +84,7 @@ defmodule A2A.Server.JSONRPC.Plug do
       {:stream, payloads} -> {:stream, %{id: id, payloads: payloads}}
       {:invalid_params, message} -> {:error, jsonrpc_error(-32602, message, id)}
       {:rpc_error, code, message} -> {:error, jsonrpc_error(code, message, id)}
-      {:error, %A2A.Error{} = error} -> {:error, jsonrpc_error(-32000, error, id)}
+      {:error, %A2A.Error{} = error} -> {:error, jsonrpc_a2a_error(error, id, opts.version)}
       {:error, error} -> {:error, jsonrpc_error(-32603, error, id)}
     end
   end
@@ -126,13 +128,15 @@ defmodule A2A.Server.JSONRPC.Plug do
 
   defp handle_streaming(conn, payload, method, opts, extensions) do
     params = Map.get(payload, "params", %{})
+    conn = maybe_assign_tenant(conn, params)
     id = Map.get(payload, "id")
 
     case method do
       :stream_message ->
         with :ok <- ensure_capability(opts.capabilities, :streaming),
              :ok <- ensure_handler(opts.executor, :handle_stream_message, 3),
-             {:ok, _} <- require_param(params, "message", "Missing message") do
+             {:ok, _} <- require_param(params, "message", "Missing message"),
+             :ok <- validate_v1(opts, :send_message, params) do
           stream_jsonrpc(conn, id, opts, extensions, opts.stream_task_first, fn emit ->
             request = A2A.Types.SendMessageRequest.from_map(params, version: opts.version)
 
@@ -147,7 +151,7 @@ defmodule A2A.Server.JSONRPC.Plug do
             send_json(conn, 200, jsonrpc_error(-32602, message, id), extensions)
 
           {:error, %A2A.Error{} = error} ->
-            send_json(conn, 200, jsonrpc_error(-32000, error, id), extensions)
+            send_json(conn, 200, jsonrpc_a2a_error(error, id, opts.version), extensions)
         end
 
       :resubscribe ->
@@ -169,13 +173,14 @@ defmodule A2A.Server.JSONRPC.Plug do
             send_json(conn, 200, jsonrpc_error(-32602, message, id), extensions)
 
           {:error, %A2A.Error{} = error} ->
-            send_json(conn, 200, jsonrpc_error(-32000, error, id), extensions)
+            send_json(conn, 200, jsonrpc_a2a_error(error, id, opts.version), extensions)
         end
 
       :subscribe ->
         with :ok <- ensure_capability(opts.capabilities, :streaming),
              :ok <- ensure_handler(opts.executor, :handle_subscribe, 3),
-             {:ok, task_id} <- require_task_id(params) do
+             {:ok, task_id} <- require_task_id(params),
+             :ok <- preflight_subscribe(opts.executor, task_id) do
           stream_jsonrpc(conn, id, opts, extensions, false, fn emit ->
             A2A.Server.ExecutorRunner.call(opts.executor, :handle_subscribe, [
               task_id,
@@ -188,15 +193,18 @@ defmodule A2A.Server.JSONRPC.Plug do
             send_json(conn, 200, jsonrpc_error(-32602, message, id), extensions)
 
           {:error, %A2A.Error{} = error} ->
-            send_json(conn, 200, jsonrpc_error(-32000, error, id), extensions)
+            send_json(conn, 200, jsonrpc_a2a_error(error, id, opts.version), extensions)
         end
     end
   end
 
   defp dispatch(method, params, opts, conn, extensions) do
+    conn = maybe_assign_tenant(conn, params)
+
     case method_key(method, opts.version) do
       :send_message ->
-        with {:ok, _message} <- require_param(params, "message", "Missing message") do
+        with {:ok, _message} <- require_param(params, "message", "Missing message"),
+             :ok <- validate_v1(opts, :send_message, params) do
           request = A2A.Types.SendMessageRequest.from_map(params, version: opts.version)
 
           with {:ok, response} <-
@@ -215,11 +223,12 @@ defmodule A2A.Server.JSONRPC.Plug do
 
       :get_task ->
         with {:ok, task_id} <- require_task_id(params),
+             :ok <- validate_v1(opts, :get_task, params),
              {:ok, task} <-
                run_request(opts, fn ->
                  A2A.Server.ExecutorRunner.call(opts.executor, :handle_get_task, [
                    task_id,
-                   %{},
+                   %{"historyLength" => params["historyLength"] || params["history_length"]},
                    ctx(conn, extensions)
                  ])
                end) do
@@ -229,7 +238,8 @@ defmodule A2A.Server.JSONRPC.Plug do
       :list_tasks ->
         request = A2A.Types.ListTasksRequest.from_map(params, version: opts.version)
 
-        with {:ok, response} <-
+        with :ok <- validate_v1(opts, :list_tasks, params),
+             {:ok, response} <-
                run_request(opts, fn ->
                  A2A.Server.ExecutorRunner.call(opts.executor, :handle_list_tasks, [
                    request,
@@ -245,7 +255,7 @@ defmodule A2A.Server.JSONRPC.Plug do
                run_request(opts, fn ->
                  A2A.Server.ExecutorRunner.call(opts.executor, :handle_cancel_task, [
                    task_id,
-                   ctx(conn, extensions)
+                   Map.put(ctx(conn, extensions), :metadata, params["metadata"])
                  ])
                end) do
           {:ok, A2A.Types.Task.to_map(response, version: opts.version)}
@@ -255,6 +265,7 @@ defmodule A2A.Server.JSONRPC.Plug do
         with :ok <- ensure_capability(opts.capabilities, :push_notifications),
              :ok <- ensure_handler(opts.executor, :handle_push_notification_config_set, 3),
              {:ok, task_id} <- require_push_task_id(params),
+             :ok <- validate_v1(opts, :push_config, params),
              config <- decode_push_config(params),
              {:ok, response} <-
                run_request(opts, fn ->
@@ -295,7 +306,7 @@ defmodule A2A.Server.JSONRPC.Plug do
                    [task_id, params, ctx(conn, extensions)]
                  )
                end) do
-          {:ok, %{"pushNotificationConfigs" => Enum.map(response, &encode_push_config/1)}}
+          {:ok, encode_push_config_list(response, opts.version)}
         end
 
       :push_notification_config_delete ->
@@ -315,7 +326,7 @@ defmodule A2A.Server.JSONRPC.Plug do
         end
 
       :get_extended_agent_card ->
-        # Available in both v0.3.0 (agent/getAuthenticatedExtendedCard) and latest (GetExtendedAgentCard)
+        # Available in both v0.3.0 (agent/getAuthenticatedExtendedCard) and v1.0 (GetExtendedAgentCard)
         with :ok <- ensure_capability(opts.capabilities, :extended_agent_card),
              :ok <- ensure_handler(opts.executor, :handle_get_extended_agent_card, 1),
              {:ok, card} <-
@@ -332,7 +343,7 @@ defmodule A2A.Server.JSONRPC.Plug do
     end
   end
 
-  defp method_key(method, :latest) do
+  defp method_key(method, :v1_0) do
     case method do
       "SendMessage" -> :send_message
       "SendStreamingMessage" -> :stream_message
@@ -342,7 +353,7 @@ defmodule A2A.Server.JSONRPC.Plug do
       "SubscribeToTask" -> :subscribe
       "CreateTaskPushNotificationConfig" -> :push_notification_config_set
       "GetTaskPushNotificationConfig" -> :push_notification_config_get
-      "ListTaskPushNotificationConfig" -> :push_notification_config_list
+      "ListTaskPushNotificationConfigs" -> :push_notification_config_list
       "DeleteTaskPushNotificationConfig" -> :push_notification_config_delete
       "GetExtendedAgentCard" -> :get_extended_agent_card
       _ -> :unknown
@@ -461,10 +472,10 @@ defmodule A2A.Server.JSONRPC.Plug do
           response_payload =
             if response == :subscribed, do: nil, else: stream_payload(response, opts)
 
-          stream_finish(stream, id, response_payload, nil)
+          stream_finish(stream, id, response_payload, nil, opts.version)
 
         {:error, error} ->
-          stream_finish(stream, id, nil, error)
+          stream_finish(stream, id, nil, error, opts.version)
       end
     after
       stream_cleanup(stream)
@@ -508,7 +519,7 @@ defmodule A2A.Server.JSONRPC.Plug do
     :ok
   end
 
-  defp stream_finish(stream, id, response_payload, error) do
+  defp stream_finish(stream, id, response_payload, error, version) do
     state = Agent.get(stream, & &1)
     conn = state.conn
 
@@ -526,7 +537,7 @@ defmodule A2A.Server.JSONRPC.Plug do
       end
 
     conn = flush_payloads(conn, id, state.buffer)
-    conn = if error, do: chunk_jsonrpc_error(conn, id, error), else: conn
+    conn = if error, do: chunk_jsonrpc_error(conn, id, error, version), else: conn
     stream_cleanup(stream)
     conn
   end
@@ -594,21 +605,13 @@ defmodule A2A.Server.JSONRPC.Plug do
     end
   end
 
-  defp chunk_jsonrpc_error(conn, id, %A2A.Error{} = error) do
-    event = A2A.Server.SSE.encode_event(jsonrpc_error(-32000, error, id))
+  defp chunk_jsonrpc_error(conn, id, %A2A.Error{} = error, version) do
+    event = A2A.Server.SSE.encode_event(jsonrpc_a2a_error(error, id, version))
 
     case chunk(conn, event) do
       {:ok, conn} -> conn
       {:error, _} -> conn
     end
-  end
-
-  defp jsonrpc_error(code, %{"type" => _} = data) do
-    %{
-      "jsonrpc" => "2.0",
-      "id" => nil,
-      "error" => %{"code" => code, "message" => "Error", "data" => data}
-    }
   end
 
   defp jsonrpc_error(code, message) do
@@ -635,6 +638,39 @@ defmodule A2A.Server.JSONRPC.Plug do
     %{"jsonrpc" => "2.0", "id" => id, "error" => %{"code" => code, "message" => inspect(error)}}
   end
 
+  defp jsonrpc_a2a_error(%A2A.Error{} = error, id, version) do
+    if A2A.Types.normalize_version(version) == :v1_0 do
+      %{
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "error" => %{
+          "code" => A2A.Error.jsonrpc_code(error, :v1_0),
+          "message" => error.message,
+          "data" => A2A.Error.v1_details(error)
+        }
+      }
+    else
+      jsonrpc_error(-32000, error, id)
+    end
+  end
+
+  defp validate_v1(%{version: :v1_0}, operation, value) do
+    case apply(A2A.Protocol.V1_0.Validation, operation, [value]) do
+      :ok -> :ok
+      {:error, message} -> {:invalid_params, message}
+    end
+  end
+
+  defp validate_v1(_opts, _operation, _value), do: :ok
+
+  defp preflight_subscribe({module, executor_opts}, task_id) do
+    if function_exported?(module, :validate_subscribe, 2),
+      do: module.validate_subscribe(executor_opts, task_id),
+      else: :ok
+  end
+
+  defp preflight_subscribe(_executor, _task_id), do: :ok
+
   defp maybe_put_www_authenticate(conn, %{"error" => %{"data" => data}}) when is_map(data) do
     type = Map.get(data, "type") || Map.get(data, :type)
     nested = Map.get(data, "data") || Map.get(data, :data)
@@ -658,6 +694,8 @@ defmodule A2A.Server.JSONRPC.Plug do
   defp ctx(conn, extensions) do
     %{
       identity: conn.assigns[:identity],
+      tenant: conn.assigns[:a2a_tenant],
+      protocol_version: conn.assigns[:a2a_version],
       request_id: A2A.Server.Headers.request_id(conn),
       extensions: extensions
     }
@@ -726,7 +764,8 @@ defmodule A2A.Server.JSONRPC.Plug do
   end
 
   defp require_push_config_id(params) do
-    case Map.get(params, "configId") || Map.get(params, "pushNotificationConfigId") do
+    case Map.get(params, "configId") || Map.get(params, "pushNotificationConfigId") ||
+           Map.get(params, "id") do
       nil -> {:invalid_params, "Missing configId"}
       config_id -> {:ok, config_id}
     end
@@ -737,6 +776,23 @@ defmodule A2A.Server.JSONRPC.Plug do
   end
 
   defp encode_push_config(config) when is_map(config), do: config
+
+  defp encode_push_config_list(
+         %A2A.Types.ListTaskPushNotificationConfigsResponse{} = response,
+         :v1_0
+       ),
+       do: A2A.Types.ListTaskPushNotificationConfigsResponse.to_map(response)
+
+  defp encode_push_config_list(response, :v1_0),
+    do: %{"configs" => Enum.map(response, &encode_push_config/1), "nextPageToken" => ""}
+
+  defp encode_push_config_list(response, _version),
+    do: %{"pushNotificationConfigs" => Enum.map(response, &encode_push_config/1)}
+
+  defp maybe_assign_tenant(conn, %{"tenant" => tenant}) when is_binary(tenant),
+    do: assign(conn, :a2a_tenant, tenant)
+
+  defp maybe_assign_tenant(conn, _params), do: conn
 
   defp ensure_capability(capabilities, :push_notifications) do
     if Map.get(capabilities, :push_notifications, false) do

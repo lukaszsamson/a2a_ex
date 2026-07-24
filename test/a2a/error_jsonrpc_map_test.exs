@@ -41,4 +41,17 @@ defmodule A2A.ErrorJSONRPCMapTest do
     assert error.data == %{"scope" => "tasks"}
     assert error.retryable?
   end
+
+  test "uses canonical v1 HTTP status mappings" do
+    assert A2A.Error.http_status(A2A.Error.new(:task_not_found, "missing"), :v1_0) == 404
+    assert A2A.Error.http_status(A2A.Error.new(:task_not_cancelable, "terminal"), :v1_0) == 400
+
+    assert A2A.Error.http_status(
+             A2A.Error.new(:content_type_not_supported, "unsupported"),
+             :v1_0
+           ) == 400
+
+    assert A2A.Error.http_status(A2A.Error.new(:invalid_agent_response, "invalid"), :v1_0) ==
+             500
+  end
 end

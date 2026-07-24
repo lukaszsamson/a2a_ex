@@ -42,7 +42,7 @@ defmodule A2A.AgentCard do
 
   @spec validate(A2A.Types.AgentCard.t(), keyword()) :: :ok | {:error, A2A.Error.t()}
   def validate(%A2A.Types.AgentCard{} = card, opts \\ []) do
-    version = Keyword.get(opts, :version, :v0_3)
+    version = opts |> Keyword.get(:version, :v0_3) |> A2A.Types.normalize_version()
     missing = missing_fields(card, version)
 
     if missing == [] do
@@ -56,13 +56,22 @@ defmodule A2A.AgentCard do
     end
   end
 
-  defp missing_fields(%A2A.Types.AgentCard{} = card, :latest) do
+  defp missing_fields(%A2A.Types.AgentCard{} = card, :v1_0) do
     []
     |> maybe_add_missing(is_nil(card.name), "name")
+    |> maybe_add_missing(is_nil(card.description), "description")
+    |> maybe_add_missing(is_nil(card.version), "version")
     |> maybe_add_missing(is_nil(card.capabilities), "capabilities")
+    |> maybe_add_missing(is_nil(card.default_input_modes), "defaultInputModes")
+    |> maybe_add_missing(is_nil(card.default_output_modes), "defaultOutputModes")
+    |> maybe_add_missing(is_nil(card.skills), "skills")
     |> maybe_add_missing(
       !valid_supported_interfaces?(card.supported_interfaces),
       "supportedInterfaces"
+    )
+    |> maybe_add_missing(
+      !supports_v1?(card.supported_interfaces),
+      "supportedInterfaces.protocolVersion=1.0"
     )
   end
 
@@ -84,7 +93,21 @@ defmodule A2A.AgentCard do
 
   defp valid_interface?(interface) do
     binding = Map.get(interface, :protocol_binding) || Map.get(interface, "protocolBinding")
+    version = Map.get(interface, :protocol_version) || Map.get(interface, "protocolVersion")
     url = Map.get(interface, :url) || Map.get(interface, "url")
-    is_binary(binding) and is_binary(url)
+    uri = if is_binary(url), do: URI.parse(url), else: nil
+
+    is_binary(binding) and binding != "" and is_binary(version) and
+      Regex.match?(~r/^\d+\.\d+(?:\.\d+)?$/, version) and is_binary(url) and
+      uri.scheme in ["http", "https"] and is_binary(uri.host)
   end
+
+  defp supports_v1?(interfaces) when is_list(interfaces) do
+    Enum.any?(interfaces, fn interface ->
+      version = Map.get(interface, :protocol_version) || Map.get(interface, "protocolVersion")
+      is_binary(version) and Regex.match?(~r/^1\.0(?:\.\d+)?$/, version)
+    end)
+  end
+
+  defp supports_v1?(_), do: false
 end
