@@ -26,7 +26,6 @@ defmodule A2aEx.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:spec_lint, "~> 0.1", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: :dev, runtime: false},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:jason, "~> 1.4"},
@@ -34,7 +33,16 @@ defmodule A2aEx.MixProject do
       {:plug_cowboy, "~> 2.7", only: :test},
       {:req, "~> 0.5"},
       {:telemetry, "~> 1.2"}
-    ]
+    ] ++ spec_lint_deps()
+  end
+
+  # spec_lint needs Elixir >= 1.18; older CI matrix entries skip it.
+  defp spec_lint_deps do
+    if Version.match?(System.version(), ">= 1.18.0") do
+      [{:spec_lint, "~> 0.1", only: [:dev, :test], runtime: false}]
+    else
+      []
+    end
   end
 
   defp package do
