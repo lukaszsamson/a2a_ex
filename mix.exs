@@ -33,7 +33,16 @@ defmodule A2aEx.MixProject do
       {:plug_cowboy, "~> 2.7", only: :test},
       {:req, "~> 0.5"},
       {:telemetry, "~> 1.2"}
-    ]
+    ] ++ spec_lint_deps()
+  end
+
+  # spec_lint needs Elixir >= 1.18; older CI matrix entries skip it.
+  defp spec_lint_deps do
+    if Version.match?(System.version(), ">= 1.18.0") do
+      [{:spec_lint, "~> 0.1", only: [:dev, :test], runtime: false}]
+    else
+      []
+    end
   end
 
   defp package do
